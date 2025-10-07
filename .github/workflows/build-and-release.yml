@@ -14,6 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.prepare.outputs.matrix }}
+      release_tag: ${{ steps.release-info.outputs.tag }}
+      release_version: ${{ steps.release-info.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,6 +35,34 @@ jobs:
           {
             echo "### Versions"
             printf '* %s\n' "${versions[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Determine release identifier
+        id: release-info
+        run: |
+          if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          elif [[ "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="auto-v${GITHUB_RUN_NUMBER}"
+          fi
+
+          if [[ -z "$tag" ]]; then
+            echo "Unable to determine release tag" >&2
+            exit 1
+          fi
+
+          version="${tag#v}"
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release"
+            echo
+            echo "- Tag: $tag"
+            echo "- Version: $version"
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
@@ -68,17 +98,21 @@ jobs:
           mvn -B -DskipTests \
             -Dmc.version="${{ matrix.minecraft_version }}" \
             -Dspigot.api.version="${{ steps.spigot.outputs.spigot }}" \
+            -Drevision="${{ needs.determine-versions.outputs.release_version }}" \
+            -Drelease.tag="${{ needs.determine-versions.outputs.release_tag }}" \
             clean package
 
       - name: Upload asset
         uses: actions/upload-artifact@v4
         with:
           name: chunksloader-${{ matrix.minecraft_version }}
-          path: assets/ChunksLoader-${{ matrix.minecraft_version }}-v*.jar
+          path: assets/ChunksLoader-${{ matrix.minecraft_version }}-${{ needs.determine-versions.outputs.release_tag }}.jar
           if-no-files-found: error
 
   release:
-    needs: build
+    needs:
+      - determine-versions
+      - build
     runs-on: ubuntu-latest
     outputs:
       assets: ${{ steps.collect.outputs.assets }}
@@ -113,8 +147,8 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: auto-v${{ github.run_number }}
-          name: Auto Release #${{ github.run_number }}
+          tag_name: ${{ needs.determine-versions.outputs.release_tag }}
+          name: Release ${{ needs.determine-versions.outputs.release_tag }}
           body: |
             Automated release created from commit ${{ github.sha }}.
 

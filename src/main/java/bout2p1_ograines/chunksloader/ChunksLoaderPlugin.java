@@ -251,7 +251,6 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
             return;
         }
 
-        manager.markBlockAsLoader(event.getBlockPlaced());
         manager.addLoader(event.getBlockPlaced().getLocation());
         event.getPlayer().sendMessage(ChatColor.GREEN + "Chunk loader activé.");
     }
@@ -264,7 +263,6 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         }
 
         event.setDropItems(false);
-        manager.unmarkBlock(block);
         if (manager.removeLoader(block)) {
             block.getWorld().dropItemNaturally(block.getLocation(), createChunkLoaderItem());
             event.getPlayer().sendMessage(ChatColor.YELLOW + "Chunk loader désactivé.");

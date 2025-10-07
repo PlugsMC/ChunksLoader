@@ -23,6 +23,7 @@ public class BlueMapIntegration implements MapIntegration {
     private static final String MARKER_SET_ID = "chunksloader";
     private static final String SPAWN_MARKER_ID_PREFIX = "spawn_";
     private static final String LOADER_MARKER_PREFIX = "loader_";
+    private static final String LOADER_AREA_MARKER_SUFFIX = "_area";
 
     private final ChunksLoaderPlugin plugin;
     private final ChunkLoaderManager manager;
@@ -216,8 +217,11 @@ public class BlueMapIntegration implements MapIntegration {
             String id = LOADER_MARKER_PREFIX + loader.worldId() + "_" + loader.x() + "_" + loader.y() + "_" + loader.z();
             Object position = vector3dConstructor.newInstance(loader.x() + 0.5, loader.y() + 0.5, loader.z() + 0.5);
             Object poiMarker = poiMarkerConstructor.newInstance(id, position);
-            poiMarkerSetLabelMethod.invoke(poiMarker, "Chunk Loader (" + world.getName() + ")");
+            String label = "Chunk Loader (" + world.getName() + ")";
+            poiMarkerSetLabelMethod.invoke(poiMarker, label);
             markers.put(id, poiMarker);
+
+            addLoaderAreaMarker(world, loader, markers, id, label);
         }
     }
 
@@ -236,12 +240,43 @@ public class BlueMapIntegration implements MapIntegration {
         float y = (float) world.getSpawnLocation().getY();
         Object marker = shapeMarkerConstructor.newInstance(markerId, shape, y);
         shapeMarkerSetLabelMethod.invoke(marker, "Zone de spawn");
-        Object fillColor = colorConstructor.newInstance(255, 0, 0, 0.35f);
-        Object lineColor = colorConstructor.newInstance(255, 0, 0, 1.0f);
+        Object fillColor = colorConstructor.newInstance(255, 85, 85, 0.35f);
+        Object lineColor = colorConstructor.newInstance(255, 85, 85, 1.0f);
         shapeMarkerSetFillColorMethod.invoke(marker, fillColor);
         shapeMarkerSetLineColorMethod.invoke(marker, lineColor);
         shapeMarkerSetDepthTestMethod.invoke(marker, false);
         getMarkers(markerSet).put(markerId, marker);
+    }
+
+    private void addLoaderAreaMarker(World world,
+                                     ChunkLoaderLocation loader,
+                                     Map<String, Object> markers,
+                                     String baseMarkerId,
+                                     String label)
+            throws InstantiationException, IllegalAccessException, InvocationTargetException {
+        int mapRadius = plugin.getMapRadius();
+        if (mapRadius <= 0) {
+            return;
+        }
+
+        int chunkX = Math.floorDiv(loader.x(), 16);
+        int chunkZ = Math.floorDiv(loader.z(), 16);
+        double minX = (chunkX - mapRadius) * 16.0;
+        double maxX = (chunkX + mapRadius + 1) * 16.0;
+        double minZ = (chunkZ - mapRadius) * 16.0;
+        double maxZ = (chunkZ + mapRadius + 1) * 16.0;
+
+        Object shape = shapeCreateRectMethod.invoke(null, minX, minZ, maxX, maxZ);
+        float y = (float) (loader.y() + 1);
+        Object areaMarker = shapeMarkerConstructor.newInstance(baseMarkerId + LOADER_AREA_MARKER_SUFFIX, shape, y);
+        String areaLabel = label + " - Zone de " + (mapRadius * 2 + 1) + "x" + (mapRadius * 2 + 1) + " chunks";
+        shapeMarkerSetLabelMethod.invoke(areaMarker, areaLabel);
+        Object fillColor = colorConstructor.newInstance(85, 255, 85, 0.2f);
+        Object lineColor = colorConstructor.newInstance(85, 255, 85, 0.9f);
+        shapeMarkerSetFillColorMethod.invoke(areaMarker, fillColor);
+        shapeMarkerSetLineColorMethod.invoke(areaMarker, lineColor);
+        shapeMarkerSetDepthTestMethod.invoke(areaMarker, false);
+        markers.put(baseMarkerId + LOADER_AREA_MARKER_SUFFIX, areaMarker);
     }
 
     private boolean setupReflection() {

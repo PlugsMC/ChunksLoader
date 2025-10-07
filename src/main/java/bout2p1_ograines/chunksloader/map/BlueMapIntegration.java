@@ -48,6 +48,7 @@ public class BlueMapIntegration implements MapIntegration {
     private Constructor<?> markerSetConstructor;
     private Method markerSetSetLabelMethod;
     private Method markerSetSetToggleableMethod;
+    private Method markerSetSetDefaultHiddenMethod;
     private Method markerSetGetMarkersMethod;
     private Method markerSetSetDirtyMethod;
 
@@ -314,6 +315,11 @@ public class BlueMapIntegration implements MapIntegration {
             markerSetConstructor = markerSetClass.getConstructor(String.class);
             markerSetSetLabelMethod = markerSetClass.getMethod("setLabel", String.class);
             markerSetSetToggleableMethod = markerSetClass.getMethod("setToggleable", boolean.class);
+            try {
+                markerSetSetDefaultHiddenMethod = markerSetClass.getMethod("setDefaultHidden", boolean.class);
+            } catch (NoSuchMethodException ignored) {
+                markerSetSetDefaultHiddenMethod = null;
+            }
             markerSetGetMarkersMethod = markerSetClass.getMethod("getMarkers");
             markerSetSetDirtyMethod = resolveMarkerSetDirtyMethod(markerSetClass);
 
@@ -351,6 +357,9 @@ public class BlueMapIntegration implements MapIntegration {
         Object markerSet = markerSetConstructor.newInstance(MARKER_SET_ID);
         markerSetSetLabelMethod.invoke(markerSet, "Chunk Loaders");
         markerSetSetToggleableMethod.invoke(markerSet, true);
+        if (markerSetSetDefaultHiddenMethod != null) {
+            markerSetSetDefaultHiddenMethod.invoke(markerSet, false);
+        }
         return markerSet;
     }
 

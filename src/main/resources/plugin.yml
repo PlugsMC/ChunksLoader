@@ -1,0 +1,16 @@
+name: ChunksLoader
+version: 1.0.0
+main: bout2p1_ograines.chunksloader.ChunksLoaderPlugin
+description: Chunk loader plugin
+author: bout2p1_ograines
+api-version: '1.21'
+commands:
+  chunksloader:
+    description: Gestion des chunk loaders
+    usage: /<command> give|map
+    permission: chunksloader.use
+permissions:
+  chunksloader.use:
+    default: true
+  chunksloader.give:
+    default: op

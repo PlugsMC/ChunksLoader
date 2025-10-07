@@ -49,6 +49,7 @@ public class BlueMapIntegration implements MapIntegration {
     private Method markerSetSetLabelMethod;
     private Method markerSetSetToggleableMethod;
     private Method markerSetGetMarkersMethod;
+    private Method markerSetSetDirtyMethod;
 
     private Constructor<?> poiMarkerConstructor;
     private Constructor<?> vector3dConstructor;
@@ -181,6 +182,7 @@ public class BlueMapIntegration implements MapIntegration {
         try {
             for (Object set : markerSets.values()) {
                 getMarkers(set).clear();
+                markMarkerSetDirty(set);
             }
 
             for (World world : Bukkit.getWorlds()) {
@@ -201,6 +203,7 @@ public class BlueMapIntegration implements MapIntegration {
                     markerSets.put(mapId, set);
                     addSpawnMarker(world, set);
                     addLoaderMarkers(world, set);
+                    markMarkerSetDirty(set);
                 }
             }
         } catch (IllegalAccessException | InvocationTargetException | InstantiationException exception) {
@@ -312,6 +315,7 @@ public class BlueMapIntegration implements MapIntegration {
             markerSetSetLabelMethod = markerSetClass.getMethod("setLabel", String.class);
             markerSetSetToggleableMethod = markerSetClass.getMethod("setToggleable", boolean.class);
             markerSetGetMarkersMethod = markerSetClass.getMethod("getMarkers");
+            markerSetSetDirtyMethod = resolveMarkerSetDirtyMethod(markerSetClass);
 
             vector3dConstructor = vectorClass.getConstructor(double.class, double.class, double.class);
             poiMarkerConstructor = poiMarkerClass.getConstructor(String.class, vectorClass);
@@ -348,5 +352,32 @@ public class BlueMapIntegration implements MapIntegration {
         markerSetSetLabelMethod.invoke(markerSet, "Chunk Loaders");
         markerSetSetToggleableMethod.invoke(markerSet, true);
         return markerSet;
+    }
+
+    private Method resolveMarkerSetDirtyMethod(Class<?> markerSetClass) {
+        try {
+            return markerSetClass.getMethod("setDirty");
+        } catch (NoSuchMethodException ignored) {
+            try {
+                return markerSetClass.getMethod("setDirty", boolean.class);
+            } catch (NoSuchMethodException ignoredAgain) {
+                return null;
+            }
+        }
+    }
+
+    private void markMarkerSetDirty(Object markerSet) {
+        if (markerSetSetDirtyMethod == null || markerSet == null) {
+            return;
+        }
+        try {
+            if (markerSetSetDirtyMethod.getParameterCount() == 0) {
+                markerSetSetDirtyMethod.invoke(markerSet);
+            } else {
+                markerSetSetDirtyMethod.invoke(markerSet, true);
+            }
+        } catch (IllegalAccessException | InvocationTargetException exception) {
+            plugin.getLogger().log(Level.FINER, "Impossible de marquer le calque BlueMap comme modifié", exception);
+        }
     }
 }

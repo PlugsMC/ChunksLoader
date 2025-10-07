@@ -3,15 +3,10 @@ package bout2p1_ograines.chunksloader;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
-import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.block.BlockState;
-import org.bukkit.block.TileState;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
-import org.bukkit.persistence.PersistentDataContainer;
-import org.bukkit.persistence.PersistentDataType;
 
 import java.io.File;
 import java.io.IOException;
@@ -27,7 +22,6 @@ public class ChunkLoaderManager {
     private static final String STORAGE_FILE = "chunkloaders.yml";
 
     private final ChunksLoaderPlugin plugin;
-    private final NamespacedKey blockKey;
     private final File storageFile;
 
     private final Map<UUID, Set<ChunkLoaderLocation>> loadersByWorld = new HashMap<>();
@@ -35,16 +29,11 @@ public class ChunkLoaderManager {
 
     public ChunkLoaderManager(ChunksLoaderPlugin plugin) {
         this.plugin = plugin;
-        this.blockKey = new NamespacedKey(plugin, "chunk_loader");
         this.storageFile = new File(plugin.getDataFolder(), STORAGE_FILE);
         if (!plugin.getDataFolder().exists()) {
             //noinspection ResultOfMethodCallIgnored
             plugin.getDataFolder().mkdirs();
         }
-    }
-
-    public NamespacedKey getBlockKey() {
-        return blockKey;
     }
 
     public void addListener(ChunkLoaderListener listener) {
@@ -118,30 +107,13 @@ public class ChunkLoaderManager {
     }
 
     public boolean isChunkLoaderBlock(Block block) {
-        BlockState state = block.getState(false);
-        if (!(state instanceof TileState tileState)) {
+        UUID worldId = block.getWorld().getUID();
+        Set<ChunkLoaderLocation> loaders = loadersByWorld.get(worldId);
+        if (loaders == null) {
             return false;
         }
-        PersistentDataContainer container = tileState.getPersistentDataContainer();
-        return container.has(blockKey, PersistentDataType.BYTE);
-    }
-
-    public void markBlockAsLoader(Block block) {
-        BlockState state = block.getState();
-        if (state instanceof TileState tileState) {
-            PersistentDataContainer container = tileState.getPersistentDataContainer();
-            container.set(blockKey, PersistentDataType.BYTE, (byte) 1);
-            tileState.update(true);
-        }
-    }
-
-    public void unmarkBlock(Block block) {
-        BlockState state = block.getState(false);
-        if (state instanceof TileState tileState) {
-            PersistentDataContainer container = tileState.getPersistentDataContainer();
-            container.remove(blockKey);
-            tileState.update(true);
-        }
+        ChunkLoaderLocation location = new ChunkLoaderLocation(worldId, block.getX(), block.getY(), block.getZ());
+        return loaders.contains(location);
     }
 
     public boolean canPlaceLoader(Location location, int radius) {

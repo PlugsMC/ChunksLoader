@@ -27,7 +27,7 @@ jobs:
             exit 1
           fi
 
-          json=$(printf '%s\n' "${versions[@]}" | jq -R . | jq -s '{minecraft_version: .}')
+          json=$(printf '%s\n' "${versions[@]}" | jq -R . | jq -c -s '{minecraft_version: .}')
           echo "matrix=$json" >> "$GITHUB_OUTPUT"
 
           {

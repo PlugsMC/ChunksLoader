@@ -232,12 +232,14 @@ public class BlueMapIntegration implements MapIntegration {
                 continue;
             }
 
+            String label = "Chunk Loader (" + world.getName() + ")";
             String markerId = LOADER_MARKER_PREFIX + loader.worldId() + "_" + loader.x() + "_" + loader.y() + "_" + loader.z();
             Object position = reflection.createVector(loader.x() + 0.5, loader.y() + 0.5, loader.z() + 0.5);
-            Object poi = reflection.createPoiMarker(markerId, position, "Chunk Loader (" + world.getName() + ")");
+            Object poi = reflection.createPoiMarker(markerId, position, label);
+            reflection.setPoiDetail(poi, buildLoaderDetail(world, loader));
             markers.put(markerId, poi);
 
-            addLoaderAreaMarker(world, loader, markers, markerId, "Chunk Loader (" + world.getName() + ")");
+            addLoaderAreaMarker(world, loader, markers, markerId, label);
         }
     }
 
@@ -265,7 +267,8 @@ public class BlueMapIntegration implements MapIntegration {
         reflection.configureShapeMarker(marker,
                 label + " - Zone de " + (radius * 2 + 1) + "x" + (radius * 2 + 1) + " chunks",
                 reflection.createColor(85, 255, 85, 0.2f),
-                reflection.createColor(85, 255, 85, 0.9f));
+                reflection.createColor(85, 255, 85, 0.9f),
+                buildLoaderAreaDetail(world, loader, radius));
         markers.put(baseId + LOADER_AREA_SUFFIX, marker);
     }
 
@@ -288,9 +291,52 @@ public class BlueMapIntegration implements MapIntegration {
         reflection.configureShapeMarker(marker,
                 "Zone de spawn",
                 reflection.createColor(255, 85, 85, 0.35f),
-                reflection.createColor(255, 85, 85, 1.0f));
+                reflection.createColor(255, 85, 85, 1.0f),
+                buildSpawnDetail(world, radius));
 
         reflection.getMarkers(markerSet).put(markerId, marker);
+    }
+
+    private String buildLoaderDetail(World world, ChunkLoaderLocation loader) {
+        int chunkX = Math.floorDiv(loader.x(), 16);
+        int chunkZ = Math.floorDiv(loader.z(), 16);
+        return new StringBuilder()
+                .append("<strong>Chunk Loader</strong><br/>")
+                .append("Monde : ").append(escape(world.getName())).append("<br/>")
+                .append("Chunk : ").append(chunkX).append(", ").append(chunkZ).append("<br/>")
+                .append("Position : ").append(loader.x()).append(", ")
+                .append(loader.y()).append(", ").append(loader.z()).append("<br/>")
+                .append("Rayon actif : ").append(plugin.getLoaderRadius()).append(" chunk(s)")
+                .toString();
+    }
+
+    private String buildLoaderAreaDetail(World world, ChunkLoaderLocation loader, int radius) {
+        int chunkX = Math.floorDiv(loader.x(), 16);
+        int chunkZ = Math.floorDiv(loader.z(), 16);
+        return new StringBuilder()
+                .append("<strong>Zone de chargement</strong><br/>")
+                .append("Monde : ").append(escape(world.getName())).append("<br/>")
+                .append("Chunk : ").append(chunkX).append(", ").append(chunkZ).append("<br/>")
+                .append("Rayon affiché : ").append(radius).append(" chunk(s)")
+                .toString();
+    }
+
+    private String buildSpawnDetail(World world, int radius) {
+        int chunkX = world.getSpawnLocation().getChunk().getX();
+        int chunkZ = world.getSpawnLocation().getChunk().getZ();
+        return new StringBuilder()
+                .append("<strong>Zone de spawn</strong><br/>")
+                .append("Monde : ").append(escape(world.getName())).append("<br/>")
+                .append("Chunk : ").append(chunkX).append(", ").append(chunkZ).append("<br/>")
+                .append("Rayon protégé : ").append(radius).append(" chunk(s)")
+                .toString();
+    }
+
+    private String escape(String input) {
+        if (input == null) {
+            return "";
+        }
+        return input.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private static final class BlueMapReflection {
@@ -317,6 +363,7 @@ public class BlueMapIntegration implements MapIntegration {
         private final Constructor<?> vectorConstructor;
         private final Constructor<?> poiConstructor;
         private final MethodHandle poiSetLabel;
+        private final MethodHandle poiSetDetail;
 
         private final MethodHandle shapeCreateRect;
         private final Constructor<?> shapeMarkerConstructor;
@@ -324,6 +371,7 @@ public class BlueMapIntegration implements MapIntegration {
         private final MethodHandle shapeMarkerSetFillColor;
         private final MethodHandle shapeMarkerSetLineColor;
         private final MethodHandle shapeMarkerSetDepthTest;
+        private final MethodHandle shapeMarkerSetDetail;
 
         private final Constructor<?> colorConstructor;
 
@@ -351,12 +399,14 @@ public class BlueMapIntegration implements MapIntegration {
                                    Constructor<?> vectorConstructor,
                                    Constructor<?> poiConstructor,
                                    MethodHandle poiSetLabel,
+                                   MethodHandle poiSetDetail,
                                    MethodHandle shapeCreateRect,
                                    Constructor<?> shapeMarkerConstructor,
                                    MethodHandle shapeMarkerSetLabel,
                                    MethodHandle shapeMarkerSetFillColor,
                                    MethodHandle shapeMarkerSetLineColor,
                                    MethodHandle shapeMarkerSetDepthTest,
+                                   MethodHandle shapeMarkerSetDetail,
                                    Constructor<?> colorConstructor,
                                    MethodHandle mapRemoveMarkerSet,
                                    Class<?> apiClass) {
@@ -380,12 +430,14 @@ public class BlueMapIntegration implements MapIntegration {
             this.vectorConstructor = vectorConstructor;
             this.poiConstructor = poiConstructor;
             this.poiSetLabel = poiSetLabel;
+            this.poiSetDetail = poiSetDetail;
             this.shapeCreateRect = shapeCreateRect;
             this.shapeMarkerConstructor = shapeMarkerConstructor;
             this.shapeMarkerSetLabel = shapeMarkerSetLabel;
             this.shapeMarkerSetFillColor = shapeMarkerSetFillColor;
             this.shapeMarkerSetLineColor = shapeMarkerSetLineColor;
             this.shapeMarkerSetDepthTest = shapeMarkerSetDepthTest;
+            this.shapeMarkerSetDetail = shapeMarkerSetDetail;
             this.colorConstructor = colorConstructor;
             this.mapRemoveMarkerSet = mapRemoveMarkerSet;
             this.apiClass = apiClass;
@@ -451,6 +503,12 @@ public class BlueMapIntegration implements MapIntegration {
                 Constructor<?> vectorConstructor = vectorClass.getConstructor(double.class, double.class, double.class);
                 Constructor<?> poiConstructor = poiMarkerClass.getConstructor(String.class, vectorClass);
                 MethodHandle poiSetLabel = lookup.findVirtual(poiMarkerClass, "setLabel", MethodType.methodType(void.class, String.class));
+                MethodHandle poiSetDetail;
+                try {
+                    poiSetDetail = lookup.findVirtual(poiMarkerClass, "setDetail", MethodType.methodType(void.class, String.class));
+                } catch (NoSuchMethodException exception) {
+                    poiSetDetail = null;
+                }
 
                 MethodHandle shapeCreateRect = lookup.findStatic(shapeClass, "createRect", MethodType.methodType(shapeClass, double.class, double.class, double.class, double.class));
                 Constructor<?> shapeMarkerConstructor = shapeMarkerClass.getConstructor(String.class, shapeClass, float.class);
@@ -458,6 +516,12 @@ public class BlueMapIntegration implements MapIntegration {
                 MethodHandle shapeMarkerSetFillColor = lookup.findVirtual(shapeMarkerClass, "setFillColor", MethodType.methodType(void.class, colorClass));
                 MethodHandle shapeMarkerSetLineColor = lookup.findVirtual(shapeMarkerClass, "setLineColor", MethodType.methodType(void.class, colorClass));
                 MethodHandle shapeMarkerSetDepthTest = lookup.findVirtual(shapeMarkerClass, "setDepthTestEnabled", MethodType.methodType(void.class, boolean.class));
+                MethodHandle shapeMarkerSetDetail;
+                try {
+                    shapeMarkerSetDetail = lookup.findVirtual(shapeMarkerClass, "setDetail", MethodType.methodType(void.class, String.class));
+                } catch (NoSuchMethodException exception) {
+                    shapeMarkerSetDetail = null;
+                }
 
                 Constructor<?> colorConstructor = colorClass.getConstructor(int.class, int.class, int.class, float.class);
 
@@ -483,12 +547,14 @@ public class BlueMapIntegration implements MapIntegration {
                         vectorConstructor,
                         poiConstructor,
                         poiSetLabel,
+                        poiSetDetail,
                         shapeCreateRect,
                         shapeMarkerConstructor,
                         shapeMarkerSetLabel,
                         shapeMarkerSetFillColor,
                         shapeMarkerSetLineColor,
                         shapeMarkerSetDepthTest,
+                        shapeMarkerSetDetail,
                         colorConstructor,
                         mapRemoveMarkerSet,
                         apiClass);
@@ -593,6 +659,17 @@ public class BlueMapIntegration implements MapIntegration {
             return marker;
         }
 
+        void setPoiDetail(Object marker, String detail) {
+            if (poiSetDetail == null || detail == null || detail.isBlank()) {
+                return;
+            }
+            try {
+                poiSetDetail.invoke(marker, detail);
+            } catch (Throwable throwable) {
+                plugin.getLogger().log(Level.FINER, "Impossible de définir le détail du marqueur POI BlueMap", throwable);
+            }
+        }
+
         Object createRectangle(double minX, double minZ, double maxX, double maxZ) throws Throwable {
             return shapeCreateRect.invokeWithArguments(minX, minZ, maxX, maxZ);
         }
@@ -601,11 +678,23 @@ public class BlueMapIntegration implements MapIntegration {
             return shapeMarkerConstructor.newInstance(id, shape, y);
         }
 
-        void configureShapeMarker(Object marker, String label, Object fill, Object line) throws Throwable {
+        void configureShapeMarker(Object marker, String label, Object fill, Object line, String detail) throws Throwable {
             shapeMarkerSetLabel.invoke(marker, label);
             shapeMarkerSetFillColor.invoke(marker, fill);
             shapeMarkerSetLineColor.invoke(marker, line);
             shapeMarkerSetDepthTest.invoke(marker, false);
+            setShapeMarkerDetail(marker, detail);
+        }
+
+        private void setShapeMarkerDetail(Object marker, String detail) {
+            if (shapeMarkerSetDetail == null || detail == null || detail.isBlank()) {
+                return;
+            }
+            try {
+                shapeMarkerSetDetail.invoke(marker, detail);
+            } catch (Throwable throwable) {
+                plugin.getLogger().log(Level.FINER, "Impossible de définir le détail du marqueur BlueMap", throwable);
+            }
         }
 
         Object createColor(int r, int g, int b, float alpha) throws InstantiationException, IllegalAccessException, InvocationTargetException {

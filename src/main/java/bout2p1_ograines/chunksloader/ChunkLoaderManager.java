@@ -52,7 +52,14 @@ public class ChunkLoaderManager {
 
         FileConfiguration configuration = YamlConfiguration.loadConfiguration(storageFile);
         for (String worldId : configuration.getKeys(false)) {
-            UUID uuid = UUID.fromString(worldId);
+            UUID uuid;
+            try {
+                uuid = UUID.fromString(worldId);
+            } catch (IllegalArgumentException exception) {
+                plugin.getLogger().warning("Ignoring invalid world identifier '" + worldId + "' in " + STORAGE_FILE);
+                continue;
+            }
+
             List<?> list = configuration.getList(worldId);
             if (list == null) {
                 continue;
@@ -65,6 +72,8 @@ public class ChunkLoaderManager {
                     Integer z = mapValue(map, "z");
                     if (x != null && y != null && z != null) {
                         set.add(new ChunkLoaderLocation(uuid, x, y, z));
+                    } else {
+                        plugin.getLogger().warning("Ignoring invalid chunk loader entry for world '" + worldId + "' in " + STORAGE_FILE);
                     }
                 }
             }

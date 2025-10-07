@@ -35,10 +35,24 @@ fi
 mkdir -p "$ASSETS_DIR"
 rm -f "$ASSETS_DIR"/ChunksLoader-*.jar
 
-PLUGIN_VERSION=$(mvn -B -q -DforceStdout help:evaluate -Dexpression=project.version)
+if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
+  raw_tag="$GITHUB_REF_NAME"
+elif [[ -n "${CI_COMMIT_TAG:-}" ]]; then
+  raw_tag="$CI_COMMIT_TAG"
+elif git -C "$PROJECT_DIR" describe --tags --exact-match >/dev/null 2>&1; then
+  raw_tag="$(git -C "$PROJECT_DIR" describe --tags --exact-match)"
+elif git -C "$PROJECT_DIR" describe --tags --abbrev=0 >/dev/null 2>&1; then
+  raw_tag="$(git -C "$PROJECT_DIR" describe --tags --abbrev=0)"
+fi
 
-if [[ -z "$PLUGIN_VERSION" ]]; then
-  echo "Unable to resolve plugin version from Maven project" >&2
+if [[ -n "${raw_tag:-}" ]]; then
+  PLUGIN_VERSION="${raw_tag#v}"
+else
+  PLUGIN_VERSION=$(mvn -B -q -DforceStdout help:evaluate -Dexpression=project.version)
+fi
+
+if [[ -z "${PLUGIN_VERSION:-}" ]]; then
+  echo "Unable to resolve plugin version from Git tags or Maven project" >&2
   exit 1
 fi
 
@@ -52,6 +66,7 @@ for version in "${VERSIONS[@]}"; do
   mvn -B -DskipTests \
       -Dmc.version="$version" \
       -Dspigot.api.version="$spigot_version" \
+      -Drevision="$PLUGIN_VERSION" \
       clean package
 
   jar_name="ChunksLoader-${version}-v${PLUGIN_VERSION}.jar"

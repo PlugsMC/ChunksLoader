@@ -1,0 +1,125 @@
+name: Build and Release per Minecraft Version
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  determine-versions:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare build matrix
+        id: prepare
+        run: |
+          mapfile -t versions < <(grep -vE '^(#|$)' supported-versions.txt)
+          if [[ ${#versions[@]} -eq 0 ]]; then
+            echo "No supported Minecraft versions listed in supported-versions.txt" >&2
+            exit 1
+          fi
+
+          json=$(printf '%s\n' "${versions[@]}" | jq -R . | jq -s '{minecraft_version: .}')
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Versions"
+            printf '* %s\n' "${versions[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: determine-versions
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.determine-versions.outputs.matrix) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Resolve Spigot API version
+        id: spigot
+        run: |
+          version="${{ matrix.minecraft_version }}"
+          spigot_version="$(./scripts/resolve-spigot-version.sh "$version")"
+          echo "spigot=$spigot_version" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Minecraft $version"
+            echo
+            echo "- Spigot API: $spigot_version"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build plugin
+        run: |
+          mvn -B -DskipTests \
+            -Dmc.version="${{ matrix.minecraft_version }}" \
+            -Dspigot.api.version="${{ steps.spigot.outputs.spigot }}" \
+            clean package
+
+      - name: Upload asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: chunksloader-${{ matrix.minecraft_version }}
+          path: assets/ChunksLoader-${{ matrix.minecraft_version }}-v*.jar
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      assets: ${{ steps.collect.outputs.assets }}
+    steps:
+      - name: Download built assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Collect asset list
+        id: collect
+        run: |
+          mapfile -t files < <(find release-assets -type f -name '*.jar' | sort)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No build artifacts found" >&2
+            exit 1
+          fi
+
+          printf '%s\n' "${files[@]}"
+
+          {
+            echo 'assets<<EOF'
+            printf '%s\n' "${files[@]}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo '## Release assets'
+            printf '* %s\n' "${files[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: auto-v${{ github.run_number }}
+          name: Auto Release #${{ github.run_number }}
+          body: |
+            Automated release created from commit ${{ github.sha }}.
+
+            Assets generated:
+            ${{ steps.collect.outputs.assets }}
+          files: release-assets/**/*.jar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

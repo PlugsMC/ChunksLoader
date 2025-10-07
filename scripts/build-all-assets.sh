@@ -9,37 +9,21 @@ if ! command -v mvn >/dev/null 2>&1; then
   exit 1
 fi
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ASSETS_DIR="$PROJECT_DIR/assets"
 VERSIONS_FILE="$PROJECT_DIR/supported-versions.txt"
+RESOLVE_SCRIPT="$SCRIPT_DIR/resolve-spigot-version.sh"
 
 if [[ ! -f "$VERSIONS_FILE" ]]; then
   echo "Unable to locate supported versions file at $VERSIONS_FILE" >&2
   exit 1
 fi
 
-# Map each Minecraft release to the closest available Spigot API version.
-# Spigot publishes API snapshots per major release series rather than for
-# every patch version, so several Minecraft versions share the same API.
-declare -A SPIGOT_VERSIONS=(
-  ["1.20"]="1.20.6-R0.1-SNAPSHOT"
-  ["1.20.1"]="1.20.6-R0.1-SNAPSHOT"
-  ["1.20.2"]="1.20.6-R0.1-SNAPSHOT"
-  ["1.20.3"]="1.20.6-R0.1-SNAPSHOT"
-  ["1.20.4"]="1.20.6-R0.1-SNAPSHOT"
-  ["1.20.5"]="1.20.6-R0.1-SNAPSHOT"
-  ["1.20.6"]="1.20.6-R0.1-SNAPSHOT"
-  ["1.21"]="1.21.1-R0.1-SNAPSHOT"
-  ["1.21.1"]="1.21.1-R0.1-SNAPSHOT"
-  ["1.21.2"]="1.21.1-R0.1-SNAPSHOT"
-  ["1.21.3"]="1.21.1-R0.1-SNAPSHOT"
-  ["1.21.4"]="1.21.1-R0.1-SNAPSHOT"
-  ["1.21.5"]="1.21.1-R0.1-SNAPSHOT"
-  ["1.21.6"]="1.21.1-R0.1-SNAPSHOT"
-  ["1.21.7"]="1.21.1-R0.1-SNAPSHOT"
-  ["1.21.8"]="1.21.1-R0.1-SNAPSHOT"
-  ["1.21.9"]="1.21.1-R0.1-SNAPSHOT"
-)
+if [[ ! -x "$RESOLVE_SCRIPT" ]]; then
+  echo "Unable to locate spigot resolution helper at $RESOLVE_SCRIPT" >&2
+  exit 1
+fi
 
 readarray -t VERSIONS < <(grep -vE "^#|^$" "$VERSIONS_FILE")
 
@@ -59,8 +43,7 @@ if [[ -z "$PLUGIN_VERSION" ]]; then
 fi
 
 for version in "${VERSIONS[@]}"; do
-  spigot_version="${SPIGOT_VERSIONS[$version]-}"
-  if [[ -z "$spigot_version" ]]; then
+  if ! spigot_version="$("$RESOLVE_SCRIPT" "$version")"; then
     echo "No Spigot API mapping configured for Minecraft $version" >&2
     exit 1
   fi

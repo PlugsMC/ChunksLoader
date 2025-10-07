@@ -48,6 +48,8 @@ public class BlueMapIntegration implements MapIntegration {
     private Constructor<?> markerSetConstructor;
     private Method markerSetSetLabelMethod;
     private Method markerSetSetToggleableMethod;
+    private Method markerSetSetDefaultHiddenMethod;
+    private Method markerSetSetHiddenMethod;
     private Method markerSetGetMarkersMethod;
     private Method markerSetSetDirtyMethod;
 
@@ -164,6 +166,8 @@ public class BlueMapIntegration implements MapIntegration {
                 if (set == null) {
                     set = createMarkerSet();
                     markerSetMap.put(MARKER_SET_ID, set);
+                } else {
+                    ensureMarkerSetVisible(set);
                 }
                 String mapId = (String) mapGetIdMethod.invoke(map);
                 markerSets.put(mapId, set);
@@ -198,6 +202,8 @@ public class BlueMapIntegration implements MapIntegration {
                     if (set == null) {
                         set = createMarkerSet();
                         markerSetMap.put(MARKER_SET_ID, set);
+                    } else {
+                        ensureMarkerSetVisible(set);
                     }
                     String mapId = (String) mapGetIdMethod.invoke(map);
                     markerSets.put(mapId, set);
@@ -314,6 +320,16 @@ public class BlueMapIntegration implements MapIntegration {
             markerSetConstructor = markerSetClass.getConstructor(String.class);
             markerSetSetLabelMethod = markerSetClass.getMethod("setLabel", String.class);
             markerSetSetToggleableMethod = markerSetClass.getMethod("setToggleable", boolean.class);
+            try {
+                markerSetSetDefaultHiddenMethod = markerSetClass.getMethod("setDefaultHidden", boolean.class);
+            } catch (NoSuchMethodException ignored) {
+                markerSetSetDefaultHiddenMethod = null;
+            }
+            try {
+                markerSetSetHiddenMethod = markerSetClass.getMethod("setHidden", boolean.class);
+            } catch (NoSuchMethodException ignored) {
+                markerSetSetHiddenMethod = null;
+            }
             markerSetGetMarkersMethod = markerSetClass.getMethod("getMarkers");
             markerSetSetDirtyMethod = resolveMarkerSetDirtyMethod(markerSetClass);
 
@@ -350,8 +366,22 @@ public class BlueMapIntegration implements MapIntegration {
             throws InstantiationException, IllegalAccessException, InvocationTargetException {
         Object markerSet = markerSetConstructor.newInstance(MARKER_SET_ID);
         markerSetSetLabelMethod.invoke(markerSet, "Chunk Loaders");
-        markerSetSetToggleableMethod.invoke(markerSet, true);
+        ensureMarkerSetVisible(markerSet);
         return markerSet;
+    }
+
+    private void ensureMarkerSetVisible(Object markerSet)
+            throws InvocationTargetException, IllegalAccessException {
+        if (markerSet == null) {
+            return;
+        }
+        markerSetSetToggleableMethod.invoke(markerSet, true);
+        if (markerSetSetDefaultHiddenMethod != null) {
+            markerSetSetDefaultHiddenMethod.invoke(markerSet, false);
+        }
+        if (markerSetSetHiddenMethod != null) {
+            markerSetSetHiddenMethod.invoke(markerSet, false);
+        }
     }
 
     private Method resolveMarkerSetDirtyMethod(Class<?> markerSetClass) {

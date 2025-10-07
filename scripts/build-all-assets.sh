@@ -37,21 +37,28 @@ rm -f "$ASSETS_DIR"/ChunksLoader-*.jar
 
 if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
   raw_tag="$GITHUB_REF_NAME"
+elif [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+  raw_tag="${GITHUB_REF#refs/tags/}"
 elif [[ -n "${CI_COMMIT_TAG:-}" ]]; then
   raw_tag="$CI_COMMIT_TAG"
 elif git -C "$PROJECT_DIR" describe --tags --exact-match >/dev/null 2>&1; then
   raw_tag="$(git -C "$PROJECT_DIR" describe --tags --exact-match)"
+elif git -C "$PROJECT_DIR" tag --points-at HEAD >/dev/null 2>&1 && \
+     [[ -n "$(git -C "$PROJECT_DIR" tag --points-at HEAD)" ]]; then
+  raw_tag="$(git -C "$PROJECT_DIR" tag --points-at HEAD | head -n1)"
 elif git -C "$PROJECT_DIR" describe --tags --abbrev=0 >/dev/null 2>&1; then
   raw_tag="$(git -C "$PROJECT_DIR" describe --tags --abbrev=0)"
 fi
 
 if [[ -n "${raw_tag:-}" ]]; then
+  RELEASE_TAG="$raw_tag"
   PLUGIN_VERSION="${raw_tag#v}"
 else
   PLUGIN_VERSION=$(mvn -B -q -DforceStdout help:evaluate -Dexpression=project.version)
+  RELEASE_TAG="v${PLUGIN_VERSION}"
 fi
 
-if [[ -z "${PLUGIN_VERSION:-}" ]]; then
+if [[ -z "${PLUGIN_VERSION:-}" || -z "${RELEASE_TAG:-}" ]]; then
   echo "Unable to resolve plugin version from Git tags or Maven project" >&2
   exit 1
 fi
@@ -67,9 +74,10 @@ for version in "${VERSIONS[@]}"; do
       -Dmc.version="$version" \
       -Dspigot.api.version="$spigot_version" \
       -Drevision="$PLUGIN_VERSION" \
+      -Drelease.tag="$RELEASE_TAG" \
       clean package
 
-  jar_name="ChunksLoader-${version}-v${PLUGIN_VERSION}.jar"
+  jar_name="ChunksLoader-${version}-${RELEASE_TAG}.jar"
   jar_path="$PROJECT_DIR/target/$jar_name"
   asset_path="$ASSETS_DIR/$jar_name"
 

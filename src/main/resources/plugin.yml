@@ -1,5 +1,5 @@
 name: ChunksLoader
-version: ${project.version}
+version: ${release.tag}
 main: bout2p1_ograines.chunksloader.ChunksLoaderPlugin
 description: Chunk loader plugin
 author: bout2p1_ograines

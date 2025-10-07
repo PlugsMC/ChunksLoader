@@ -4,8 +4,6 @@ import bout2p1_ograines.chunksloader.ChunkLoaderLocation;
 import bout2p1_ograines.chunksloader.ChunkLoaderManager;
 import bout2p1_ograines.chunksloader.ChunksLoaderPlugin;
 
-import com.flowpowered.math.vector.Vector3d;
-
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 
@@ -52,6 +50,7 @@ public class BlueMapIntegration implements MapIntegration {
     private Method markerSetGetMarkersMethod;
 
     private Constructor<?> poiMarkerConstructor;
+    private Constructor<?> vector3dConstructor;
     private Method poiMarkerSetLabelMethod;
 
     private Method shapeCreateRectMethod;
@@ -212,7 +211,8 @@ public class BlueMapIntegration implements MapIntegration {
         Map<String, Object> markers = getMarkers(markerSet);
         for (ChunkLoaderLocation loader : manager.getLoaders(world.getUID())) {
             String id = LOADER_MARKER_PREFIX + loader.worldId() + "_" + loader.x() + "_" + loader.y() + "_" + loader.z();
-            Object poiMarker = poiMarkerConstructor.newInstance(id, new Vector3d(loader.x() + 0.5, loader.y() + 0.5, loader.z() + 0.5));
+            Object position = vector3dConstructor.newInstance(loader.x() + 0.5, loader.y() + 0.5, loader.z() + 0.5);
+            Object poiMarker = poiMarkerConstructor.newInstance(id, position);
             poiMarkerSetLabelMethod.invoke(poiMarker, "Chunk Loader (" + world.getName() + ")");
             markers.put(id, poiMarker);
         }
@@ -252,6 +252,13 @@ public class BlueMapIntegration implements MapIntegration {
             Class<?> shapeMarkerClass = Class.forName("de.bluecolored.bluemap.api.markers.ShapeMarker");
             Class<?> colorClass = Class.forName("de.bluecolored.bluemap.api.math.Color");
 
+            Class<?> vectorClass;
+            try {
+                vectorClass = Class.forName("com.flowpowered.math.vector.Vector3d");
+            } catch (ClassNotFoundException ignored) {
+                vectorClass = Class.forName("de.bluecolored.bluemap.api.math.Vector3d");
+            }
+
             apiOnEnableMethod = apiClass.getMethod("onEnable", Consumer.class);
             apiOnDisableMethod = apiClass.getMethod("onDisable", Consumer.class);
             apiUnregisterListenerMethod = apiClass.getMethod("unregisterListener", Consumer.class);
@@ -268,7 +275,8 @@ public class BlueMapIntegration implements MapIntegration {
             markerSetSetToggleableMethod = markerSetClass.getMethod("setToggleable", boolean.class);
             markerSetGetMarkersMethod = markerSetClass.getMethod("getMarkers");
 
-            poiMarkerConstructor = poiMarkerClass.getConstructor(String.class, Vector3d.class);
+            vector3dConstructor = vectorClass.getConstructor(double.class, double.class, double.class);
+            poiMarkerConstructor = poiMarkerClass.getConstructor(String.class, vectorClass);
             poiMarkerSetLabelMethod = poiMarkerClass.getMethod("setLabel", String.class);
 
             shapeCreateRectMethod = shapeClass.getMethod("createRect", double.class, double.class, double.class, double.class);

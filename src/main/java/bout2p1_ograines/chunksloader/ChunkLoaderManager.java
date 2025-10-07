@@ -24,7 +24,7 @@ public class ChunkLoaderManager {
     private final ChunksLoaderPlugin plugin;
     private final File storageFile;
 
-    private final Map<UUID, Set<ChunkLoaderLocation>> loadersByWorld = new HashMap<>();
+    private final Map<UUID, Map<ChunkLoaderLocation, Boolean>> loadersByWorld = new HashMap<>();
     private final List<ChunkLoaderListener> listeners = new ArrayList<>();
 
     public ChunkLoaderManager(ChunksLoaderPlugin plugin) {
@@ -64,14 +64,16 @@ public class ChunkLoaderManager {
             if (list == null) {
                 continue;
             }
-            Set<ChunkLoaderLocation> set = new HashSet<>();
+            Map<ChunkLoaderLocation, Boolean> set = new HashMap<>();
             for (Object entry : list) {
                 if (entry instanceof Map<?, ?> map) {
                     Integer x = mapValue(map, "x");
                     Integer y = mapValue(map, "y");
                     Integer z = mapValue(map, "z");
+                    Boolean active = mapBoolean(map, "active");
                     if (x != null && y != null && z != null) {
-                        set.add(new ChunkLoaderLocation(uuid, x, y, z));
+                        ChunkLoaderLocation location = new ChunkLoaderLocation(uuid, x, y, z);
+                        set.put(location, active == null || active);
                     } else {
                         plugin.getLogger().warning("Ignoring invalid chunk loader entry for world '" + worldId + "' in " + STORAGE_FILE);
                     }
@@ -88,13 +90,15 @@ public class ChunkLoaderManager {
 
     public void save() {
         FileConfiguration configuration = new YamlConfiguration();
-        for (Map.Entry<UUID, Set<ChunkLoaderLocation>> entry : loadersByWorld.entrySet()) {
+        for (Map.Entry<UUID, Map<ChunkLoaderLocation, Boolean>> entry : loadersByWorld.entrySet()) {
             List<Map<String, Object>> list = new ArrayList<>();
-            for (ChunkLoaderLocation location : entry.getValue()) {
+            for (Map.Entry<ChunkLoaderLocation, Boolean> loaderEntry : entry.getValue().entrySet()) {
+                ChunkLoaderLocation location = loaderEntry.getKey();
                 Map<String, Object> map = new HashMap<>();
                 map.put("x", location.x());
                 map.put("y", location.y());
                 map.put("z", location.z());
+                map.put("active", loaderEntry.getValue() != null && loaderEntry.getValue());
                 list.add(map);
             }
             configuration.set(entry.getKey().toString(), list);
@@ -115,14 +119,28 @@ public class ChunkLoaderManager {
         return null;
     }
 
+    private Boolean mapBoolean(Map<?, ?> map, String key) {
+        Object value = map.get(key);
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value instanceof String string) {
+            return Boolean.parseBoolean(string);
+        }
+        if (value instanceof Number number) {
+            return number.intValue() != 0;
+        }
+        return null;
+    }
+
     public boolean isChunkLoaderBlock(Block block) {
         UUID worldId = block.getWorld().getUID();
-        Set<ChunkLoaderLocation> loaders = loadersByWorld.get(worldId);
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(worldId);
         if (loaders == null) {
             return false;
         }
         ChunkLoaderLocation location = new ChunkLoaderLocation(worldId, block.getX(), block.getY(), block.getZ());
-        return loaders.contains(location);
+        return loaders.containsKey(location);
     }
 
     public boolean canPlaceLoader(Location location, int radius) {
@@ -134,7 +152,7 @@ public class ChunkLoaderManager {
             return false;
         }
 
-        for (ChunkLoaderLocation loader : getLoaders(worldId)) {
+        for (ChunkLoaderLocation loader : getLoaderStates(worldId).keySet()) {
             if (overlaps(chunkX, chunkZ, loader, radius)) {
                 return false;
             }
@@ -144,8 +162,9 @@ public class ChunkLoaderManager {
 
     public void addLoader(Location location) {
         UUID worldId = location.getWorld().getUID();
-        Set<ChunkLoaderLocation> loaders = loadersByWorld.computeIfAbsent(worldId, k -> new HashSet<>());
-        loaders.add(new ChunkLoaderLocation(worldId, location.getBlockX(), location.getBlockY(), location.getBlockZ()));
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.computeIfAbsent(worldId, k -> new HashMap<>());
+        ChunkLoaderLocation loaderLocation = new ChunkLoaderLocation(worldId, location.getBlockX(), location.getBlockY(), location.getBlockZ());
+        loaders.put(loaderLocation, true);
         save();
         applyForcedChunks(location.getWorld());
         notifyListeners(location.getWorld());
@@ -154,19 +173,13 @@ public class ChunkLoaderManager {
     public boolean removeLoader(Block block) {
         World world = block.getWorld();
         UUID worldId = world.getUID();
-        Set<ChunkLoaderLocation> loaders = loadersByWorld.get(worldId);
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(worldId);
         if (loaders == null) {
             return false;
         }
-        ChunkLoaderLocation match = null;
-        for (ChunkLoaderLocation loader : loaders) {
-            if (loader.x() == block.getX() && loader.y() == block.getY() && loader.z() == block.getZ()) {
-                match = loader;
-                break;
-            }
-        }
-        if (match != null) {
-            loaders.remove(match);
+        ChunkLoaderLocation location = new ChunkLoaderLocation(worldId, block.getX(), block.getY(), block.getZ());
+        Boolean removed = loaders.remove(location);
+        if (removed != null) {
             if (loaders.isEmpty()) {
                 loadersByWorld.remove(worldId);
             }
@@ -179,13 +192,23 @@ public class ChunkLoaderManager {
     }
 
     public Set<ChunkLoaderLocation> getLoaders(UUID worldId) {
-        return loadersByWorld.getOrDefault(worldId, Set.of());
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(worldId);
+        if (loaders == null) {
+            return Set.of();
+        }
+        Set<ChunkLoaderLocation> active = new HashSet<>();
+        for (Map.Entry<ChunkLoaderLocation, Boolean> entry : loaders.entrySet()) {
+            if (Boolean.TRUE.equals(entry.getValue())) {
+                active.add(entry.getKey());
+            }
+        }
+        return active;
     }
 
     public Set<ChunkLoaderLocation> getAllLoaders() {
         Set<ChunkLoaderLocation> all = new HashSet<>();
-        for (Set<ChunkLoaderLocation> loaders : loadersByWorld.values()) {
-            all.addAll(loaders);
+        for (Map<ChunkLoaderLocation, Boolean> loaders : loadersByWorld.values()) {
+            all.addAll(loaders.keySet());
         }
         return all;
     }
@@ -209,8 +232,14 @@ public class ChunkLoaderManager {
     public void applyForcedChunks(World world) {
         clearForcedChunks(world);
         int radius = plugin.getLoaderRadius();
-        for (ChunkLoaderLocation loader : getLoaders(world.getUID())) {
-            forceChunkArea(world, loader, radius);
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(world.getUID());
+        if (loaders == null) {
+            return;
+        }
+        for (Map.Entry<ChunkLoaderLocation, Boolean> entry : loaders.entrySet()) {
+            if (Boolean.TRUE.equals(entry.getValue())) {
+                forceChunkArea(world, entry.getKey(), radius);
+            }
         }
     }
 
@@ -272,6 +301,79 @@ public class ChunkLoaderManager {
             }
         }
         return loaded;
+    }
+
+    public Set<ChunkCoordinate> getInactiveChunkArea(World world) {
+        Set<ChunkCoordinate> inactive = new HashSet<>();
+        int radius = plugin.getLoaderRadius();
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(world.getUID());
+        if (loaders == null) {
+            return inactive;
+        }
+        for (Map.Entry<ChunkLoaderLocation, Boolean> entry : loaders.entrySet()) {
+            if (Boolean.TRUE.equals(entry.getValue())) {
+                continue;
+            }
+            ChunkLoaderLocation loader = entry.getKey();
+            int centerX = Math.floorDiv(loader.x(), 16);
+            int centerZ = Math.floorDiv(loader.z(), 16);
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    inactive.add(new ChunkCoordinate(centerX + dx, centerZ + dz));
+                }
+            }
+        }
+        return inactive;
+    }
+
+    public Map<ChunkLoaderLocation, Boolean> getLoaderStates(UUID worldId) {
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(worldId);
+        if (loaders == null) {
+            return Map.of();
+        }
+        return Map.copyOf(loaders);
+    }
+
+    public boolean isLoaderActive(ChunkLoaderLocation location) {
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(location.worldId());
+        if (loaders == null) {
+            return false;
+        }
+        return Boolean.TRUE.equals(loaders.get(location));
+    }
+
+    public boolean isLoaderActive(Block block) {
+        ChunkLoaderLocation location = new ChunkLoaderLocation(block.getWorld().getUID(), block.getX(), block.getY(), block.getZ());
+        return isLoaderActive(location);
+    }
+
+    public void setLoaderActive(ChunkLoaderLocation location, boolean active) {
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(location.worldId());
+        if (loaders == null || !loaders.containsKey(location)) {
+            return;
+        }
+        if (Boolean.TRUE.equals(loaders.get(location)) == active) {
+            return;
+        }
+        loaders.put(location, active);
+        save();
+        World world = Bukkit.getWorld(location.worldId());
+        if (world != null) {
+            applyForcedChunks(world);
+            notifyListeners(world);
+        } else {
+            applyForcedChunks();
+            notifyListeners(null);
+        }
+    }
+
+    public boolean toggleLoader(ChunkLoaderLocation location) {
+        if (!getLoaderStates(location.worldId()).containsKey(location)) {
+            return false;
+        }
+        boolean currentlyActive = isLoaderActive(location);
+        setLoaderActive(location, !currentlyActive);
+        return !currentlyActive;
     }
 
 }

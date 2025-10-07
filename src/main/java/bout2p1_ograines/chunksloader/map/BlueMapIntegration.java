@@ -210,6 +210,9 @@ public class BlueMapIntegration implements MapIntegration {
     private void addLoaderMarkers(World world, Object markerSet) throws IllegalAccessException, InvocationTargetException, InstantiationException {
         Map<String, Object> markers = getMarkers(markerSet);
         for (ChunkLoaderLocation loader : manager.getLoaders(world.getUID())) {
+            if (!manager.isLoaderActive(loader)) {
+                continue;
+            }
             String id = LOADER_MARKER_PREFIX + loader.worldId() + "_" + loader.x() + "_" + loader.y() + "_" + loader.z();
             Object position = vector3dConstructor.newInstance(loader.x() + 0.5, loader.y() + 0.5, loader.z() + 0.5);
             Object poiMarker = poiMarkerConstructor.newInstance(id, position);

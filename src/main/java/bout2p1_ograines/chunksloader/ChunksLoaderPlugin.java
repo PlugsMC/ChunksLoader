@@ -15,12 +15,18 @@ import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -32,6 +38,10 @@ import java.util.Set;
 public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
     private static final String CONFIG_RADIUS = "loader-radius";
     private static final String CONFIG_MAP_RADIUS = "map-radius";
+    private static final String MENU_TITLE = ChatColor.DARK_GREEN + "Chunk Loader";
+    private static final int MENU_SIZE = 9;
+    private static final int TOGGLE_SLOT = 4;
+    private static final int CLOSE_SLOT = 8;
 
     private NamespacedKey itemKey;
     private ChunkLoaderManager manager;
@@ -209,6 +219,7 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         int radius = mapRadius;
         ChunkLoaderManager manager = getManager();
         Set<ChunkCoordinate> loaded = manager.getLoadedChunkArea(player.getWorld());
+        Set<ChunkCoordinate> inactive = manager.getInactiveChunkArea(player.getWorld());
         int centerChunkX = player.getLocation().getChunk().getX();
         int centerChunkZ = player.getLocation().getChunk().getZ();
         StringBuilder builder = new StringBuilder();
@@ -228,6 +239,10 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
                 boolean loaderChunk = loaded.contains(new ChunkCoordinate(chunkX, chunkZ));
                 if (loaderChunk) {
                     row.append(ChatColor.GREEN).append('■');
+                    continue;
+                }
+                if (inactive.contains(new ChunkCoordinate(chunkX, chunkZ))) {
+                    row.append(ChatColor.GOLD).append('■');
                 } else {
                     row.append(ChatColor.DARK_GRAY).append('■');
                 }
@@ -235,7 +250,7 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
             player.sendMessage(row.toString());
         }
 
-        player.sendMessage(ChatColor.GREEN + "■" + ChatColor.GRAY + " = Chunk loader" + ChatColor.RED + "  ■" + ChatColor.GRAY + " = Spawn" + ChatColor.DARK_GRAY + "  ■" + ChatColor.GRAY + " = Inactif");
+        player.sendMessage(ChatColor.GREEN + "■" + ChatColor.GRAY + " = Chunk loader" + ChatColor.GOLD + "  ■" + ChatColor.GRAY + " = Chunk loader désactivé" + ChatColor.RED + "  ■" + ChatColor.GRAY + " = Spawn" + ChatColor.DARK_GRAY + "  ■" + ChatColor.GRAY + " = Inactif");
     }
 
     @EventHandler
@@ -274,9 +289,146 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         if (event.getClickedBlock() == null) {
             return;
         }
-        if (!manager.isChunkLoaderBlock(event.getClickedBlock())) {
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) {
+            return;
+        }
+        if (event.getHand() != EquipmentSlot.HAND) {
+            return;
+        }
+        Block clicked = event.getClickedBlock();
+        if (!manager.isChunkLoaderBlock(clicked)) {
             return;
         }
         event.setCancelled(true);
+        openChunkLoaderMenu(event.getPlayer(), clicked);
+    }
+
+    @EventHandler
+    public void onInventoryClick(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return;
+        }
+        Inventory inventory = event.getInventory();
+        InventoryHolder holder = inventory.getHolder();
+        if (!(holder instanceof ChunkLoaderMenuHolder menuHolder)) {
+            return;
+        }
+        event.setCancelled(true);
+        if (event.getRawSlot() == TOGGLE_SLOT) {
+            handleToggle(menuHolder.getLocation(), inventory, player);
+        } else if (event.getRawSlot() == CLOSE_SLOT) {
+            player.closeInventory();
+        }
+    }
+
+    @EventHandler
+    public void onInventoryClose(InventoryCloseEvent event) {
+        if (!(event.getPlayer() instanceof Player)) {
+            return;
+        }
+        InventoryHolder holder = event.getInventory().getHolder();
+        if (holder instanceof ChunkLoaderMenuHolder menuHolder) {
+            menuHolder.clear();
+        }
+    }
+
+    private void handleToggle(ChunkLoaderLocation location, Inventory inventory, Player player) {
+        if (!manager.getLoaderStates(location.worldId()).containsKey(location)) {
+            player.sendMessage(ChatColor.RED + "Ce chunk loader n'existe plus.");
+            player.closeInventory();
+            return;
+        }
+        boolean active = manager.toggleLoader(location);
+        if (active) {
+            player.sendMessage(ChatColor.GREEN + "Chunk loader activé.");
+        } else {
+            player.sendMessage(ChatColor.YELLOW + "Chunk loader désactivé.");
+        }
+        fillChunkLoaderMenu(inventory, location);
+    }
+
+    private void openChunkLoaderMenu(Player player, Block block) {
+        ChunkLoaderLocation location = new ChunkLoaderLocation(block.getWorld().getUID(), block.getX(), block.getY(), block.getZ());
+        ChunkLoaderMenuHolder holder = new ChunkLoaderMenuHolder(location);
+        Inventory inventory = Bukkit.createInventory(holder, MENU_SIZE, MENU_TITLE);
+        holder.setInventory(inventory);
+        fillChunkLoaderMenu(inventory, location);
+        player.openInventory(inventory);
+    }
+
+    private void fillChunkLoaderMenu(Inventory inventory, ChunkLoaderLocation location) {
+        ItemStack filler = createFillerItem();
+        for (int slot = 0; slot < inventory.getSize(); slot++) {
+            if (slot == TOGGLE_SLOT || slot == CLOSE_SLOT) {
+                continue;
+            }
+            inventory.setItem(slot, filler.clone());
+        }
+        boolean active = manager.isLoaderActive(location);
+        inventory.setItem(TOGGLE_SLOT, createToggleItem(active));
+        inventory.setItem(CLOSE_SLOT, createCloseItem());
+    }
+
+    private ItemStack createToggleItem(boolean active) {
+        Material material = active ? Material.LIME_DYE : Material.ORANGE_DYE;
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            if (active) {
+                meta.setDisplayName(ChatColor.GREEN + "Chunk loader actif");
+                meta.setLore(List.of(ChatColor.GRAY + "Clique pour désactiver le chunk loader."));
+            } else {
+                meta.setDisplayName(ChatColor.GOLD + "Chunk loader désactivé");
+                meta.setLore(List.of(ChatColor.GRAY + "Clique pour réactiver le chunk loader."));
+            }
+            item.setItemMeta(meta);
+        }
+        return item;
+    }
+
+    private ItemStack createCloseItem() {
+        ItemStack item = new ItemStack(Material.BARRIER);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(ChatColor.RED + "Fermer");
+            item.setItemMeta(meta);
+        }
+        return item;
+    }
+
+    private ItemStack createFillerItem() {
+        ItemStack item = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(" ");
+            item.setItemMeta(meta);
+        }
+        return item;
+    }
+
+    private static class ChunkLoaderMenuHolder implements InventoryHolder {
+        private final ChunkLoaderLocation location;
+        private Inventory inventory;
+
+        private ChunkLoaderMenuHolder(ChunkLoaderLocation location) {
+            this.location = location;
+        }
+
+        public ChunkLoaderLocation getLocation() {
+            return location;
+        }
+
+        @Override
+        public Inventory getInventory() {
+            return inventory;
+        }
+
+        private void setInventory(Inventory inventory) {
+            this.inventory = inventory;
+        }
+
+        private void clear() {
+            this.inventory = null;
+        }
     }
 }

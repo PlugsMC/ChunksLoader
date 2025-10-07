@@ -179,6 +179,9 @@ public class DynmapIntegration implements MapIntegration {
         if (markerSet == null) {
             return;
         }
+        if (!manager.isLoaderActive(loader)) {
+            return;
+        }
         String markerId = LOADER_MARKER_PREFIX + loader.worldId() + "_" + loader.x() + "_" + loader.y() + "_" + loader.z();
         String label = "Chunk Loader (" + world.getName() + ")";
         createMarkerMethod.invoke(markerSet, markerId, label, world.getName(), loader.x() + 0.5, loader.y() + 0.5,

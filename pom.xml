@@ -5,13 +5,14 @@
 
     <groupId>bout2p1_ograines</groupId>
     <artifactId>chunksloader</artifactId>
-    <version>1.0.0</version>
+    <version>${revision}</version>
     <packaging>jar</packaging>
 
     <name>ChunksLoader</name>
     <description>Chunk loader plugin for Bukkit/Spigot through Minecraft 1.21.9</description>
 
     <properties>
+        <revision>1.0.0</revision>
         <java.version>17</java.version>
         <maven.compiler.source>${java.version}</maven.compiler.source>
         <maven.compiler.target>${java.version}</maven.compiler.target>

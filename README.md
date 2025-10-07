@@ -22,6 +22,12 @@ script:
 ./scripts/build-all-assets.sh
 ```
 
+The script reads the supported Minecraft versions from
+`supported-versions.txt`, recompiles the plugin for each entry, and ensures that
+every resulting jar is copied into the `assets/` directory using the
+`ChunksLoader-<minecraft-version>-v<plugin-version>.jar` naming scheme so they
+can be uploaded directly to a release.
+
 ## Configuration
 
 The plugin ships with a `config.yml` that lets you change the loader radius and

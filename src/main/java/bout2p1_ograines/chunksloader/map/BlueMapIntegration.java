@@ -466,7 +466,12 @@ public class BlueMapIntegration implements MapIntegration {
 
                 MethodHandle apiOnEnable = lookup.findStatic(apiClass, "onEnable", MethodType.methodType(void.class, Consumer.class));
                 MethodHandle apiOnDisable = lookup.findStatic(apiClass, "onDisable", MethodType.methodType(void.class, Consumer.class));
-                MethodHandle apiUnregister = lookup.findStatic(apiClass, "unregisterListener", MethodType.methodType(void.class, Consumer.class));
+                MethodHandle apiUnregister;
+                try {
+                    apiUnregister = lookup.findStatic(apiClass, "unregisterListener", MethodType.methodType(void.class, Consumer.class));
+                } catch (NoSuchMethodException exception) {
+                    apiUnregister = null;
+                }
                 MethodHandle apiGetInstance = lookup.findStatic(apiClass, "getInstance", MethodType.methodType(Optional.class));
                 MethodHandle apiGetMaps = lookup.findVirtual(apiClass, "getMaps", MethodType.methodType(Collection.class));
                 MethodHandle apiGetWorld = lookup.findVirtual(apiClass, "getWorld", MethodType.methodType(Optional.class, Object.class));
@@ -591,6 +596,9 @@ public class BlueMapIntegration implements MapIntegration {
         }
 
         void unregisterListener(Consumer<Object> listener) throws Throwable {
+            if (apiUnregister == null) {
+                return;
+            }
             apiUnregister.invokeWithArguments(listener);
         }
 

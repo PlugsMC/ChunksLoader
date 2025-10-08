@@ -30,8 +30,9 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
-import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitTask;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -51,6 +52,7 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
     private int mapRadius;
     private final List<MapIntegration> mapIntegrations = new ArrayList<>();
     private BlueMapIntegration blueMapIntegration;
+    private BukkitTask blueMapInitializationTask;
 
     @Override
     public void onEnable() {
@@ -88,6 +90,7 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
 
     @Override
     public void onDisable() {
+        cancelBlueMapInitializationTask();
         for (MapIntegration integration : mapIntegrations) {
             try {
                 manager.removeListener(integration);
@@ -136,10 +139,14 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         }
 
         blueMapIntegration = null;
+        cancelBlueMapInitializationTask();
         if (isBlueMapEnabled()) {
-            tryInitializeBlueMapIntegration();
+            if (!tryInitializeBlueMapIntegration()) {
+                scheduleBlueMapInitialization();
+            }
         } else {
             getLogger().info("BlueMap n'est pas encore disponible, en attente de son initialisation.");
+            scheduleBlueMapInitialization();
         }
     }
 
@@ -148,9 +155,18 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         return plugin != null && plugin.isEnabled();
     }
 
-    private void tryInitializeBlueMapIntegration() {
-        if (blueMapIntegration != null || !isBlueMapEnabled()) {
-            return;
+    private boolean isBlueMapApiAvailable() {
+        try {
+            Class.forName("de.bluecolored.bluemap.api.BlueMapAPI");
+            return true;
+        } catch (ClassNotFoundException | LinkageError exception) {
+            return false;
+        }
+    }
+
+    private boolean tryInitializeBlueMapIntegration() {
+        if (blueMapIntegration != null || !isBlueMapEnabled() || !isBlueMapApiAvailable()) {
+            return blueMapIntegration != null;
         }
 
         BlueMapIntegration integration = new BlueMapIntegration(this);
@@ -160,6 +176,28 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
             manager.addListener(integration);
             integration.onLoadersChanged(null);
             getLogger().info("Intégration BlueMap activée.");
+            return true;
+        }
+
+        return false;
+    }
+
+    private void scheduleBlueMapInitialization() {
+        if (blueMapInitializationTask != null) {
+            return;
+        }
+
+        blueMapInitializationTask = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            if (tryInitializeBlueMapIntegration()) {
+                cancelBlueMapInitializationTask();
+            }
+        }, 1L, 20L);
+    }
+
+    private void cancelBlueMapInitializationTask() {
+        if (blueMapInitializationTask != null) {
+            blueMapInitializationTask.cancel();
+            blueMapInitializationTask = null;
         }
     }
 
@@ -194,7 +232,12 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
     @EventHandler
     public void onPluginEnable(PluginEnableEvent event) {
         if (blueMapIntegration == null && "BlueMap".equalsIgnoreCase(event.getPlugin().getName())) {
-            Bukkit.getScheduler().runTask(this, this::tryInitializeBlueMapIntegration);
+            cancelBlueMapInitializationTask();
+            Bukkit.getScheduler().runTask(this, () -> {
+                if (!tryInitializeBlueMapIntegration()) {
+                    scheduleBlueMapInitialization();
+                }
+            });
         }
     }
 

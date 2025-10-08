@@ -496,8 +496,12 @@ public class BlueMapIntegration implements MapIntegration {
                 MethodHandle markerSetSetDirty;
                 try {
                     markerSetSetDirty = lookup.findVirtual(markerSetClass, "setDirty", MethodType.methodType(void.class));
-                } catch (NoSuchMethodException exception) {
-                    markerSetSetDirty = lookup.findVirtual(markerSetClass, "setDirty", MethodType.methodType(void.class, boolean.class));
+                } catch (NoSuchMethodException first) {
+                    try {
+                        markerSetSetDirty = lookup.findVirtual(markerSetClass, "setDirty", MethodType.methodType(void.class, boolean.class));
+                    } catch (NoSuchMethodException second) {
+                        markerSetSetDirty = null;
+                    }
                 }
 
                 Constructor<?> vectorConstructor = vectorClass.getConstructor(double.class, double.class, double.class);
@@ -515,7 +519,16 @@ public class BlueMapIntegration implements MapIntegration {
                 MethodHandle shapeMarkerSetLabel = lookup.findVirtual(shapeMarkerClass, "setLabel", MethodType.methodType(void.class, String.class));
                 MethodHandle shapeMarkerSetFillColor = lookup.findVirtual(shapeMarkerClass, "setFillColor", MethodType.methodType(void.class, colorClass));
                 MethodHandle shapeMarkerSetLineColor = lookup.findVirtual(shapeMarkerClass, "setLineColor", MethodType.methodType(void.class, colorClass));
-                MethodHandle shapeMarkerSetDepthTest = lookup.findVirtual(shapeMarkerClass, "setDepthTestEnabled", MethodType.methodType(void.class, boolean.class));
+                MethodHandle shapeMarkerSetDepthTest;
+                try {
+                    shapeMarkerSetDepthTest = lookup.findVirtual(shapeMarkerClass, "setDepthTest", MethodType.methodType(void.class, boolean.class));
+                } catch (NoSuchMethodException exception) {
+                    try {
+                        shapeMarkerSetDepthTest = lookup.findVirtual(shapeMarkerClass, "setDepthTestEnabled", MethodType.methodType(void.class, boolean.class));
+                    } catch (NoSuchMethodException ignored) {
+                        shapeMarkerSetDepthTest = null;
+                    }
+                }
                 MethodHandle shapeMarkerSetDetail;
                 try {
                     shapeMarkerSetDetail = lookup.findVirtual(shapeMarkerClass, "setDetail", MethodType.methodType(void.class, String.class));
@@ -525,7 +538,12 @@ public class BlueMapIntegration implements MapIntegration {
 
                 Constructor<?> colorConstructor = colorClass.getConstructor(int.class, int.class, int.class, float.class);
 
-                MethodHandle mapRemoveMarkerSet = lookup.findVirtual(mapClass, "removeMarkerSet", MethodType.methodType(void.class, String.class));
+                MethodHandle mapRemoveMarkerSet;
+                try {
+                    mapRemoveMarkerSet = lookup.findVirtual(mapClass, "removeMarkerSet", MethodType.methodType(void.class, String.class));
+                } catch (NoSuchMethodException exception) {
+                    mapRemoveMarkerSet = null;
+                }
 
                 return new BlueMapReflection(plugin,
                         apiOnEnable,
@@ -639,10 +657,13 @@ public class BlueMapIntegration implements MapIntegration {
                 return;
             }
             try {
-                if (markerSetSetDirty.type().parameterCount() == 1) {
+                int parameters = markerSetSetDirty.type().parameterCount();
+                if (parameters == 1) {
+                    markerSetSetDirty.invoke(markerSet);
+                } else if (parameters == 2) {
                     markerSetSetDirty.invoke(markerSet, true);
                 } else {
-                    markerSetSetDirty.invoke(markerSet);
+                    markerSetSetDirty.invokeWithArguments(markerSet);
                 }
             } catch (Throwable throwable) {
                 plugin.getLogger().log(Level.FINER, "Impossible de marquer le calque BlueMap", throwable);
@@ -682,7 +703,9 @@ public class BlueMapIntegration implements MapIntegration {
             shapeMarkerSetLabel.invoke(marker, label);
             shapeMarkerSetFillColor.invoke(marker, fill);
             shapeMarkerSetLineColor.invoke(marker, line);
-            shapeMarkerSetDepthTest.invoke(marker, false);
+            if (shapeMarkerSetDepthTest != null) {
+                shapeMarkerSetDepthTest.invoke(marker, false);
+            }
             setShapeMarkerDetail(marker, detail);
         }
 
@@ -702,7 +725,11 @@ public class BlueMapIntegration implements MapIntegration {
         }
 
         void removeMarkerSet(Object map, String markerSetId) throws Throwable {
-            mapRemoveMarkerSet.invoke(map, markerSetId);
+            if (mapRemoveMarkerSet != null) {
+                mapRemoveMarkerSet.invoke(map, markerSetId);
+            } else {
+                getMarkerSetMap(map).remove(markerSetId);
+            }
         }
 
         void removeMarkerSetById(String mapId, String markerSetId, Object apiInstance) throws Throwable {

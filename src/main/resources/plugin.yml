@@ -4,6 +4,8 @@ main: bout2p1_ograines.chunksloader.ChunksLoaderPlugin
 description: Chunk loader plugin
 author: bout2p1_ograines
 api-version: '1.21'
+softdepend:
+  - BlueMap
 commands:
   chunksloader:
     description: Gestion des chunk loaders

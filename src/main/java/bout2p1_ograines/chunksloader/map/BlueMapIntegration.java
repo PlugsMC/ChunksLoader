@@ -445,142 +445,156 @@ public class BlueMapIntegration implements MapIntegration {
 
         static BlueMapReflection create(ChunksLoaderPlugin plugin) {
             try {
-                MethodHandles.Lookup lookup = MethodHandles.lookup();
-
-                Class<?> apiClass = Class.forName("de.bluecolored.bluemap.api.BlueMapAPI");
-                Class<?> worldClass = Class.forName("de.bluecolored.bluemap.api.BlueMapWorld");
-                Class<?> mapClass = Class.forName("de.bluecolored.bluemap.api.BlueMapMap");
-                Class<?> markerSetClass = Class.forName("de.bluecolored.bluemap.api.markers.MarkerSet");
-                Class<?> poiMarkerClass = Class.forName("de.bluecolored.bluemap.api.markers.POIMarker");
-                Class<?> shapeClass = Class.forName("de.bluecolored.bluemap.api.math.Shape");
-                Class<?> shapeMarkerClass = Class.forName("de.bluecolored.bluemap.api.markers.ShapeMarker");
-                Class<?> colorClass = Class.forName("de.bluecolored.bluemap.api.math.Color");
-
-                Class<?> vectorClass;
+                return createWithLookup(plugin, MethodHandles.lookup());
+            } catch (IllegalAccessException accessException) {
                 try {
-                    vectorClass = Class.forName("com.flowpowered.math.vector.Vector3d");
-                } catch (ClassNotFoundException ignored) {
-                    vectorClass = Class.forName("de.bluecolored.bluemap.api.math.Vector3d");
+                    return createWithLookup(plugin, MethodHandles.publicLookup());
+                } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException exception) {
+                    logMissingApi(plugin, exception);
+                    return null;
                 }
-
-                MethodHandle apiOnEnable = lookup.findStatic(apiClass, "onEnable", MethodType.methodType(void.class, Consumer.class));
-                MethodHandle apiOnDisable = lookup.findStatic(apiClass, "onDisable", MethodType.methodType(void.class, Consumer.class));
-                MethodHandle apiUnregister = lookup.findStatic(apiClass, "unregisterListener", MethodType.methodType(void.class, Consumer.class));
-                MethodHandle apiGetInstance = lookup.findStatic(apiClass, "getInstance", MethodType.methodType(Optional.class));
-                MethodHandle apiGetMaps = lookup.findVirtual(apiClass, "getMaps", MethodType.methodType(Collection.class));
-                MethodHandle apiGetWorld = lookup.findVirtual(apiClass, "getWorld", MethodType.methodType(Optional.class, Object.class));
-                MethodHandle worldGetMaps = lookup.findVirtual(worldClass, "getMaps", MethodType.methodType(Collection.class));
-                MethodHandle mapGetMarkerSets = lookup.findVirtual(mapClass, "getMarkerSets", MethodType.methodType(Map.class));
-                MethodHandle mapGetId = lookup.findVirtual(mapClass, "getId", MethodType.methodType(String.class));
-
-                Constructor<?> markerSetConstructor = markerSetClass.getConstructor(String.class);
-                MethodHandle markerSetSetLabel = lookup.findVirtual(markerSetClass, "setLabel", MethodType.methodType(void.class, String.class));
-                MethodHandle markerSetSetToggleable = lookup.findVirtual(markerSetClass, "setToggleable", MethodType.methodType(void.class, boolean.class));
-
-                MethodHandle markerSetSetDefaultHidden;
-                try {
-                    markerSetSetDefaultHidden = lookup.findVirtual(markerSetClass, "setDefaultHidden", MethodType.methodType(void.class, boolean.class));
-                } catch (NoSuchMethodException exception) {
-                    markerSetSetDefaultHidden = null;
-                }
-
-                MethodHandle markerSetSetHidden;
-                try {
-                    markerSetSetHidden = lookup.findVirtual(markerSetClass, "setHidden", MethodType.methodType(void.class, boolean.class));
-                } catch (NoSuchMethodException exception) {
-                    markerSetSetHidden = null;
-                }
-
-                MethodHandle markerSetGetMarkers = lookup.findVirtual(markerSetClass, "getMarkers", MethodType.methodType(Map.class));
-
-                MethodHandle markerSetSetDirty;
-                try {
-                    markerSetSetDirty = lookup.findVirtual(markerSetClass, "setDirty", MethodType.methodType(void.class));
-                } catch (NoSuchMethodException first) {
-                    try {
-                        markerSetSetDirty = lookup.findVirtual(markerSetClass, "setDirty", MethodType.methodType(void.class, boolean.class));
-                    } catch (NoSuchMethodException second) {
-                        markerSetSetDirty = null;
-                    }
-                }
-
-                Constructor<?> vectorConstructor = vectorClass.getConstructor(double.class, double.class, double.class);
-                Constructor<?> poiConstructor = poiMarkerClass.getConstructor(String.class, vectorClass);
-                MethodHandle poiSetLabel = lookup.findVirtual(poiMarkerClass, "setLabel", MethodType.methodType(void.class, String.class));
-                MethodHandle poiSetDetail;
-                try {
-                    poiSetDetail = lookup.findVirtual(poiMarkerClass, "setDetail", MethodType.methodType(void.class, String.class));
-                } catch (NoSuchMethodException exception) {
-                    poiSetDetail = null;
-                }
-
-                MethodHandle shapeCreateRect = lookup.findStatic(shapeClass, "createRect", MethodType.methodType(shapeClass, double.class, double.class, double.class, double.class));
-                Constructor<?> shapeMarkerConstructor = shapeMarkerClass.getConstructor(String.class, shapeClass, float.class);
-                MethodHandle shapeMarkerSetLabel = lookup.findVirtual(shapeMarkerClass, "setLabel", MethodType.methodType(void.class, String.class));
-                MethodHandle shapeMarkerSetFillColor = lookup.findVirtual(shapeMarkerClass, "setFillColor", MethodType.methodType(void.class, colorClass));
-                MethodHandle shapeMarkerSetLineColor = lookup.findVirtual(shapeMarkerClass, "setLineColor", MethodType.methodType(void.class, colorClass));
-                MethodHandle shapeMarkerSetDepthTest;
-                try {
-                    shapeMarkerSetDepthTest = lookup.findVirtual(shapeMarkerClass, "setDepthTest", MethodType.methodType(void.class, boolean.class));
-                } catch (NoSuchMethodException exception) {
-                    try {
-                        shapeMarkerSetDepthTest = lookup.findVirtual(shapeMarkerClass, "setDepthTestEnabled", MethodType.methodType(void.class, boolean.class));
-                    } catch (NoSuchMethodException ignored) {
-                        shapeMarkerSetDepthTest = null;
-                    }
-                }
-                MethodHandle shapeMarkerSetDetail;
-                try {
-                    shapeMarkerSetDetail = lookup.findVirtual(shapeMarkerClass, "setDetail", MethodType.methodType(void.class, String.class));
-                } catch (NoSuchMethodException exception) {
-                    shapeMarkerSetDetail = null;
-                }
-
-                Constructor<?> colorConstructor = colorClass.getConstructor(int.class, int.class, int.class, float.class);
-
-                MethodHandle mapRemoveMarkerSet;
-                try {
-                    mapRemoveMarkerSet = lookup.findVirtual(mapClass, "removeMarkerSet", MethodType.methodType(void.class, String.class));
-                } catch (NoSuchMethodException exception) {
-                    mapRemoveMarkerSet = null;
-                }
-
-                return new BlueMapReflection(plugin,
-                        apiOnEnable,
-                        apiOnDisable,
-                        apiUnregister,
-                        apiGetInstance,
-                        apiGetMaps,
-                        apiGetWorld,
-                        worldGetMaps,
-                        mapGetMarkerSets,
-                        mapGetId,
-                        markerSetConstructor,
-                        markerSetSetLabel,
-                        markerSetSetToggleable,
-                        markerSetSetDefaultHidden,
-                        markerSetSetHidden,
-                        markerSetGetMarkers,
-                        markerSetSetDirty,
-                        vectorConstructor,
-                        poiConstructor,
-                        poiSetLabel,
-                        poiSetDetail,
-                        shapeCreateRect,
-                        shapeMarkerConstructor,
-                        shapeMarkerSetLabel,
-                        shapeMarkerSetFillColor,
-                        shapeMarkerSetLineColor,
-                        shapeMarkerSetDepthTest,
-                        shapeMarkerSetDetail,
-                        colorConstructor,
-                        mapRemoveMarkerSet,
-                        apiClass);
-            } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException exception) {
-                plugin.getLogger().log(Level.INFO, "BlueMap API introuvable, l'intégration est désactivée.");
-                plugin.getLogger().log(Level.FINE, "Détails de l'échec BlueMap", exception);
+            } catch (ClassNotFoundException | NoSuchMethodException exception) {
+                logMissingApi(plugin, exception);
                 return null;
             }
+        }
+
+        private static BlueMapReflection createWithLookup(ChunksLoaderPlugin plugin, MethodHandles.Lookup lookup)
+                throws ClassNotFoundException, NoSuchMethodException, IllegalAccessException {
+            Class<?> apiClass = Class.forName("de.bluecolored.bluemap.api.BlueMapAPI");
+            Class<?> worldClass = Class.forName("de.bluecolored.bluemap.api.BlueMapWorld");
+            Class<?> mapClass = Class.forName("de.bluecolored.bluemap.api.BlueMapMap");
+            Class<?> markerSetClass = Class.forName("de.bluecolored.bluemap.api.markers.MarkerSet");
+            Class<?> poiMarkerClass = Class.forName("de.bluecolored.bluemap.api.markers.POIMarker");
+            Class<?> shapeClass = Class.forName("de.bluecolored.bluemap.api.math.Shape");
+            Class<?> shapeMarkerClass = Class.forName("de.bluecolored.bluemap.api.markers.ShapeMarker");
+            Class<?> colorClass = Class.forName("de.bluecolored.bluemap.api.math.Color");
+
+            Class<?> vectorClass;
+            try {
+                vectorClass = Class.forName("com.flowpowered.math.vector.Vector3d");
+            } catch (ClassNotFoundException ignored) {
+                vectorClass = Class.forName("de.bluecolored.bluemap.api.math.Vector3d");
+            }
+
+            MethodHandle apiOnEnable = lookup.findStatic(apiClass, "onEnable", MethodType.methodType(void.class, Consumer.class));
+            MethodHandle apiOnDisable = lookup.findStatic(apiClass, "onDisable", MethodType.methodType(void.class, Consumer.class));
+            MethodHandle apiUnregister = lookup.findStatic(apiClass, "unregisterListener", MethodType.methodType(void.class, Consumer.class));
+            MethodHandle apiGetInstance = lookup.findStatic(apiClass, "getInstance", MethodType.methodType(Optional.class));
+            MethodHandle apiGetMaps = lookup.findVirtual(apiClass, "getMaps", MethodType.methodType(Collection.class));
+            MethodHandle apiGetWorld = lookup.findVirtual(apiClass, "getWorld", MethodType.methodType(Optional.class, Object.class));
+            MethodHandle worldGetMaps = lookup.findVirtual(worldClass, "getMaps", MethodType.methodType(Collection.class));
+            MethodHandle mapGetMarkerSets = lookup.findVirtual(mapClass, "getMarkerSets", MethodType.methodType(Map.class));
+            MethodHandle mapGetId = lookup.findVirtual(mapClass, "getId", MethodType.methodType(String.class));
+
+            Constructor<?> markerSetConstructor = markerSetClass.getConstructor(String.class);
+            MethodHandle markerSetSetLabel = lookup.findVirtual(markerSetClass, "setLabel", MethodType.methodType(void.class, String.class));
+            MethodHandle markerSetSetToggleable = lookup.findVirtual(markerSetClass, "setToggleable", MethodType.methodType(void.class, boolean.class));
+
+            MethodHandle markerSetSetDefaultHidden;
+            try {
+                markerSetSetDefaultHidden = lookup.findVirtual(markerSetClass, "setDefaultHidden", MethodType.methodType(void.class, boolean.class));
+            } catch (NoSuchMethodException exception) {
+                markerSetSetDefaultHidden = null;
+            }
+
+            MethodHandle markerSetSetHidden;
+            try {
+                markerSetSetHidden = lookup.findVirtual(markerSetClass, "setHidden", MethodType.methodType(void.class, boolean.class));
+            } catch (NoSuchMethodException exception) {
+                markerSetSetHidden = null;
+            }
+
+            MethodHandle markerSetGetMarkers = lookup.findVirtual(markerSetClass, "getMarkers", MethodType.methodType(Map.class));
+
+            MethodHandle markerSetSetDirty;
+            try {
+                markerSetSetDirty = lookup.findVirtual(markerSetClass, "setDirty", MethodType.methodType(void.class));
+            } catch (NoSuchMethodException first) {
+                try {
+                    markerSetSetDirty = lookup.findVirtual(markerSetClass, "setDirty", MethodType.methodType(void.class, boolean.class));
+                } catch (NoSuchMethodException second) {
+                    markerSetSetDirty = null;
+                }
+            }
+
+            Constructor<?> vectorConstructor = vectorClass.getConstructor(double.class, double.class, double.class);
+            Constructor<?> poiConstructor = poiMarkerClass.getConstructor(String.class, vectorClass);
+            MethodHandle poiSetLabel = lookup.findVirtual(poiMarkerClass, "setLabel", MethodType.methodType(void.class, String.class));
+            MethodHandle poiSetDetail;
+            try {
+                poiSetDetail = lookup.findVirtual(poiMarkerClass, "setDetail", MethodType.methodType(void.class, String.class));
+            } catch (NoSuchMethodException exception) {
+                poiSetDetail = null;
+            }
+
+            MethodHandle shapeCreateRect = lookup.findStatic(shapeClass, "createRect", MethodType.methodType(shapeClass, double.class, double.class, double.class, double.class));
+            Constructor<?> shapeMarkerConstructor = shapeMarkerClass.getConstructor(String.class, shapeClass, float.class);
+            MethodHandle shapeMarkerSetLabel = lookup.findVirtual(shapeMarkerClass, "setLabel", MethodType.methodType(void.class, String.class));
+            MethodHandle shapeMarkerSetFillColor = lookup.findVirtual(shapeMarkerClass, "setFillColor", MethodType.methodType(void.class, colorClass));
+            MethodHandle shapeMarkerSetLineColor = lookup.findVirtual(shapeMarkerClass, "setLineColor", MethodType.methodType(void.class, colorClass));
+            MethodHandle shapeMarkerSetDepthTest;
+            try {
+                shapeMarkerSetDepthTest = lookup.findVirtual(shapeMarkerClass, "setDepthTest", MethodType.methodType(void.class, boolean.class));
+            } catch (NoSuchMethodException exception) {
+                try {
+                    shapeMarkerSetDepthTest = lookup.findVirtual(shapeMarkerClass, "setDepthTestEnabled", MethodType.methodType(void.class, boolean.class));
+                } catch (NoSuchMethodException ignored) {
+                    shapeMarkerSetDepthTest = null;
+                }
+            }
+            MethodHandle shapeMarkerSetDetail;
+            try {
+                shapeMarkerSetDetail = lookup.findVirtual(shapeMarkerClass, "setDetail", MethodType.methodType(void.class, String.class));
+            } catch (NoSuchMethodException exception) {
+                shapeMarkerSetDetail = null;
+            }
+
+            Constructor<?> colorConstructor = colorClass.getConstructor(int.class, int.class, int.class, float.class);
+
+            MethodHandle mapRemoveMarkerSet;
+            try {
+                mapRemoveMarkerSet = lookup.findVirtual(mapClass, "removeMarkerSet", MethodType.methodType(void.class, String.class));
+            } catch (NoSuchMethodException exception) {
+                mapRemoveMarkerSet = null;
+            }
+
+            return new BlueMapReflection(plugin,
+                    apiOnEnable,
+                    apiOnDisable,
+                    apiUnregister,
+                    apiGetInstance,
+                    apiGetMaps,
+                    apiGetWorld,
+                    worldGetMaps,
+                    mapGetMarkerSets,
+                    mapGetId,
+                    markerSetConstructor,
+                    markerSetSetLabel,
+                    markerSetSetToggleable,
+                    markerSetSetDefaultHidden,
+                    markerSetSetHidden,
+                    markerSetGetMarkers,
+                    markerSetSetDirty,
+                    vectorConstructor,
+                    poiConstructor,
+                    poiSetLabel,
+                    poiSetDetail,
+                    shapeCreateRect,
+                    shapeMarkerConstructor,
+                    shapeMarkerSetLabel,
+                    shapeMarkerSetFillColor,
+                    shapeMarkerSetLineColor,
+                    shapeMarkerSetDepthTest,
+                    shapeMarkerSetDetail,
+                    colorConstructor,
+                    mapRemoveMarkerSet,
+                    apiClass);
+        }
+
+        private static void logMissingApi(ChunksLoaderPlugin plugin, Exception exception) {
+            plugin.getLogger().log(Level.INFO, "BlueMap API introuvable, l'intégration est désactivée.");
+            plugin.getLogger().log(Level.FINE, "Détails de l'échec BlueMap", exception);
         }
 
         void registerEnableListener(Consumer<Object> listener) throws Throwable {

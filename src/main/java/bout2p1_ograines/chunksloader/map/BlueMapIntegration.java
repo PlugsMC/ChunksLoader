@@ -1,758 +1,140 @@
 package bout2p1_ograines.chunksloader.map;
 
-import bout2p1_ograines.chunksloader.ChunkLoaderLocation;
-import bout2p1_ograines.chunksloader.ChunkLoaderManager;
 import bout2p1_ograines.chunksloader.ChunksLoaderPlugin;
+import de.bluecolored.bluemap.api.BlueMapAPI;
+import de.bluecolored.bluemap.api.BlueMapMap;
+import de.bluecolored.bluemap.api.BlueMapWorld;
+import de.bluecolored.bluemap.api.markers.MarkerSet;
+import de.bluecolored.bluemap.api.markers.ShapeMarker;
+import de.bluecolored.bluemap.api.math.Color;
+import de.bluecolored.bluemap.api.math.Shape;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.MethodType;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
-import java.util.function.Consumer;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
+import java.util.stream.Collectors;
 
-@SuppressWarnings({"rawtypes", "unchecked"})
-public class BlueMapIntegration implements MapIntegration {
+public final class BlueMapIntegration implements MapIntegration {
 
-    private static final String MARKER_SET_ID = "chunksloader";
-    private static final String MARKER_SET_LABEL = "Chunk Loaders";
-    private static final String SPAWN_MARKER_ID_PREFIX = "spawn_";
-    private static final String LOADER_MARKER_PREFIX = "loader_";
-    private static final String LOADER_AREA_SUFFIX = "_area";
+    private static final String MARKER_SET_ID = "chunkloader";
+    private static final Color ACTIVE_LINE = new Color(46, 204, 113, 1.0f);
+    private static final Color ACTIVE_FILL = new Color(46, 204, 113, 0.35f);
+    private static final Color INACTIVE_LINE = new Color(231, 76, 60, 1.0f);
+    private static final Color INACTIVE_FILL = new Color(231, 76, 60, 0.25f);
 
     private final ChunksLoaderPlugin plugin;
-    private final ChunkLoaderManager manager;
+    private final BlueMapAPI api;
+    private final Map<String, Optional<BlueMapWorld>> worldCache = new ConcurrentHashMap<>();
 
-    private final Map<String, Object> markerSets = new HashMap<>();
-
-    private BlueMapReflection reflection;
-    private Object apiInstance;
-    private Consumer<Object> enableListener;
-    private Consumer<Object> disableListener;
-
-    public BlueMapIntegration(ChunksLoaderPlugin plugin) {
+    public BlueMapIntegration(ChunksLoaderPlugin plugin, BlueMapAPI api) {
         this.plugin = plugin;
-        this.manager = plugin.getManager();
+        this.api = api;
     }
 
     @Override
-    public boolean initialize() {
-        reflection = BlueMapReflection.create(plugin);
-        if (reflection == null) {
-            return false;
-        }
-
-        enableListener = api -> Bukkit.getScheduler().runTask(plugin, () -> handleEnable(api));
-        disableListener = api -> Bukkit.getScheduler().runTask(plugin, this::handleDisable);
-
+    public void update(Collection<LoaderData> loaders) {
         try {
-            reflection.registerEnableListener(enableListener);
-            reflection.registerDisableListener(disableListener);
-            reflection.getCurrentInstance().ifPresent(api ->
-                    Bukkit.getScheduler().runTask(plugin, () -> handleEnable(api)));
-        } catch (Throwable throwable) {
-            plugin.getLogger().log(Level.WARNING, "Impossible d'initialiser l'intégration BlueMap", throwable);
-            unregisterListeners();
-            reflection = null;
-            return false;
-        }
+            Map<String, List<LoaderData>> grouped = loaders.stream()
+                .collect(Collectors.groupingBy(LoaderData::worldName));
 
-        return true;
+            Map<String, List<LoaderData>> byWorldId = new HashMap<>();
+            for (Map.Entry<String, List<LoaderData>> entry : grouped.entrySet()) {
+                resolveWorld(entry.getKey()).ifPresent(world ->
+                    byWorldId.computeIfAbsent(world.getId(), ignored -> new ArrayList<>()).addAll(entry.getValue())
+                );
+            }
+
+            for (BlueMapMap map : api.getMaps()) {
+                List<LoaderData> data = byWorldId.getOrDefault(map.getWorld().getId(), Collections.emptyList());
+                if (data.isEmpty()) {
+                    map.getMarkerSets().remove(MARKER_SET_ID);
+                    continue;
+                }
+                MarkerSet markerSet = map.getMarkerSets().computeIfAbsent(MARKER_SET_ID, key -> new MarkerSet("Chunk Loaders"));
+                markerSet.setLabel("Chunk Loaders");
+                markerSet.setToggleable(true);
+                markerSet.setDefaultHidden(false);
+                markerSet.setSorting(50);
+                markerSet.getMarkers().clear();
+
+                for (LoaderData loader : data) {
+                    Shape shape = Shape.createRect(loader.minX(), loader.minZ(), loader.maxX(), loader.maxZ());
+                    ShapeMarker marker = new ShapeMarker(loader.plainDisplayName(), shape, loader.blockY());
+                    marker.setLabel(loader.plainDisplayName());
+                    marker.setDetail(buildDetail(loader));
+                    marker.setDepthTestEnabled(false);
+                    marker.setLineWidth(2);
+                    if (loader.active()) {
+                        marker.setLineColor(ACTIVE_LINE);
+                        marker.setFillColor(ACTIVE_FILL);
+                    } else {
+                        marker.setLineColor(INACTIVE_LINE);
+                        marker.setFillColor(INACTIVE_FILL);
+                    }
+                    marker.centerPosition();
+                    markerSet.put(loader.id(), marker);
+                }
+            }
+        } catch (Exception exception) {
+            plugin.getLogger().log(Level.WARNING, "Impossible de mettre à jour les marqueurs BlueMap", exception);
+        }
+    }
+
+    private Optional<BlueMapWorld> resolveWorld(String worldName) {
+        return worldCache.computeIfAbsent(worldName, name -> {
+            World bukkitWorld = Bukkit.getWorld(name);
+            if (bukkitWorld != null) {
+                Optional<BlueMapWorld> resolved = api.getWorld(bukkitWorld);
+                if (resolved.isPresent()) {
+                    return resolved;
+                }
+            }
+            Optional<BlueMapWorld> direct = api.getWorld(name);
+            if (direct.isPresent()) {
+                return direct;
+            }
+            String namespaced = "minecraft:" + name.toLowerCase(Locale.ROOT);
+            return api.getWorld(namespaced);
+        });
+    }
+
+    private String buildDetail(LoaderData loader) {
+        return new StringBuilder()
+            .append("<strong>").append(escape(loader.plainDisplayName())).append("</strong><br/>")
+            .append("Propriétaire : ").append(escape(loader.ownerLabel())).append("<br/>")
+            .append("Rayon : ").append(loader.radius()).append(" chunk(s)<br/>")
+            .append("Chunks : ").append(loader.chunkCount()).append("<br/>")
+            .append("État : ").append(loader.statusLabel()).append("<br/>")
+            .append("Position : ").append(loader.blockX()).append(", ")
+            .append(loader.blockY()).append(", ").append(loader.blockZ()).append("<br/>")
+            .append("Activité : ").append(escape(loader.formatDuration(Locale.FRANCE)))
+            .toString();
+    }
+
+    private String escape(String input) {
+        return input.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    public boolean isFor(BlueMapAPI other) {
+        return api == other;
     }
 
     @Override
     public void shutdown() {
-        if (reflection == null) {
-            return;
-        }
-
-        unregisterListeners();
-
-        Runnable task = this::handleDisable;
-        if (Bukkit.isPrimaryThread()) {
-            task.run();
-        } else {
-            Bukkit.getScheduler().runTask(plugin, task);
-        }
-    }
-
-    @Override
-    public void onLoadersChanged(World world) {
-        if (reflection == null || apiInstance == null) {
-            return;
-        }
-
-        Runnable task = () -> {
-            if (reflection == null || apiInstance == null) {
-                return;
-            }
-
-            if (world != null) {
-                refreshMarkers(List.of(world), false);
-            } else {
-                refreshMarkers(Bukkit.getWorlds(), true);
-            }
-        };
-
-        if (Bukkit.isPrimaryThread()) {
-            task.run();
-        } else {
-            Bukkit.getScheduler().runTask(plugin, task);
-        }
-    }
-
-    private void handleEnable(Object apiInstance) {
-        if (reflection == null) {
-            return;
-        }
-
-        this.apiInstance = apiInstance;
-        markerSets.clear();
-        refreshMarkers(Bukkit.getWorlds(), true);
-    }
-
-    private void handleDisable() {
-        if (reflection == null || apiInstance == null) {
-            markerSets.clear();
-            apiInstance = null;
-            return;
-        }
-
         try {
-            for (Object map : reflection.getMaps(apiInstance)) {
-                reflection.removeMarkerSet(map, MARKER_SET_ID);
-            }
-        } catch (Throwable throwable) {
-            plugin.getLogger().log(Level.WARNING, "Impossible de nettoyer les marqueurs BlueMap", throwable);
-        } finally {
-            markerSets.clear();
-            apiInstance = null;
+            api.getMaps().forEach(map -> map.getMarkerSets().remove(MARKER_SET_ID));
+        } catch (Exception exception) {
+            plugin.getLogger().log(Level.WARNING, "Impossible de nettoyer les marqueurs BlueMap", exception);
         }
-    }
-
-    private void unregisterListeners() {
-        if (reflection == null) {
-            return;
-        }
-
-        if (enableListener != null) {
-            try {
-                reflection.unregisterListener(enableListener);
-            } catch (Throwable throwable) {
-                plugin.getLogger().log(Level.WARNING, "Impossible de désinscrire le listener BlueMap", throwable);
-            }
-            enableListener = null;
-        }
-
-        if (disableListener != null) {
-            try {
-                reflection.unregisterListener(disableListener);
-            } catch (Throwable throwable) {
-                plugin.getLogger().log(Level.WARNING, "Impossible de désinscrire le listener BlueMap", throwable);
-            }
-            disableListener = null;
-        }
-    }
-
-    private void refreshMarkers(Collection<World> worlds, boolean cleanMissingMaps) {
-        if (reflection == null || apiInstance == null) {
-            return;
-        }
-
-        Set<String> seenMaps = cleanMissingMaps ? new HashSet<>() : null;
-
-        for (World world : worlds) {
-            if (world == null) {
-                continue;
-            }
-
-            try {
-                Optional<?> optionalWorld = reflection.getWorld(apiInstance, world);
-                if (optionalWorld.isEmpty()) {
-                    continue;
-                }
-
-                Object blueWorld = optionalWorld.get();
-                for (Object map : reflection.getWorldMaps(blueWorld)) {
-                    String mapId = reflection.getMapId(map);
-                    Object markerSet = reflection.ensureMarkerSet(map, MARKER_SET_ID, MARKER_SET_LABEL);
-                    if (markerSet == null) {
-                        continue;
-                    }
-
-                    markerSets.put(mapId, markerSet);
-                    if (seenMaps != null) {
-                        seenMaps.add(mapId);
-                    }
-
-                    Map<String, Object> markers = reflection.getMarkers(markerSet);
-                    markers.clear();
-                    addSpawnMarker(world, markers);
-                    addLoaderMarkers(world, markers);
-                    reflection.markDirty(markerSet);
-                }
-            } catch (Throwable throwable) {
-                plugin.getLogger().log(Level.WARNING, "Impossible de mettre à jour les marqueurs BlueMap", throwable);
-            }
-        }
-
-        if (cleanMissingMaps && seenMaps != null) {
-            markerSets.entrySet().removeIf(entry -> {
-                if (seenMaps.contains(entry.getKey())) {
-                    return false;
-                }
-
-                try {
-                    reflection.removeMarkerSetById(entry.getKey(), MARKER_SET_ID, apiInstance);
-                } catch (Throwable throwable) {
-                    plugin.getLogger().log(Level.FINER,
-                            "Impossible de retirer le calque BlueMap obsolète " + entry.getKey(),
-                            throwable);
-                }
-                return true;
-            });
-        }
-    }
-
-    private void addLoaderMarkers(World world, Map<String, Object> markers) throws Throwable {
-        for (ChunkLoaderLocation loader : manager.getLoaders(world.getUID())) {
-            if (!manager.isLoaderActive(loader)) {
-                continue;
-            }
-
-            String label = "Chunk Loader (" + world.getName() + ")";
-            String markerId = LOADER_MARKER_PREFIX + loader.worldId() + "_" + loader.x() + "_" + loader.y() + "_" + loader.z();
-
-            Object position = reflection.createVector(loader.x() + 0.5, loader.y() + 0.5, loader.z() + 0.5);
-            Object poiMarker = reflection.createPoiMarker(markerId, position, label);
-            reflection.setPoiDetail(poiMarker, buildLoaderDetail(world, loader));
-            markers.put(markerId, poiMarker);
-
-            addLoaderAreaMarker(world, loader, markers, markerId, label);
-        }
-    }
-
-    private void addLoaderAreaMarker(World world,
-                                     ChunkLoaderLocation loader,
-                                     Map<String, Object> markers,
-                                     String baseId,
-                                     String label) throws Throwable {
-        int radius = plugin.getMapRadius();
-        if (radius <= 0) {
-            return;
-        }
-
-        int chunkX = Math.floorDiv(loader.x(), 16);
-        int chunkZ = Math.floorDiv(loader.z(), 16);
-
-        double minX = (chunkX - radius) * 16.0;
-        double maxX = (chunkX + radius + 1) * 16.0;
-        double minZ = (chunkZ - radius) * 16.0;
-        double maxZ = (chunkZ + radius + 1) * 16.0;
-
-        Object shape = reflection.createRectangle(minX, minZ, maxX, maxZ);
-        float y = (float) (loader.y() + 1);
-        int size = radius * 2 + 1;
-        Object marker = reflection.createShapeMarker(baseId + LOADER_AREA_SUFFIX, shape, y);
-        reflection.configureShapeMarker(marker,
-                label + " - Zone de " + size + "x" + size + " chunks",
-                reflection.createColor(85, 255, 85, 0.2f),
-                reflection.createColor(85, 255, 85, 0.9f),
-                buildLoaderAreaDetail(world, loader, radius));
-        markers.put(baseId + LOADER_AREA_SUFFIX, marker);
-    }
-
-    private void addSpawnMarker(World world, Map<String, Object> markers) throws Throwable {
-        UUID worldId = world.getUID();
-        String markerId = SPAWN_MARKER_ID_PREFIX + worldId;
-
-        int radius = plugin.getLoaderRadius();
-        int spawnChunkX = world.getSpawnLocation().getChunk().getX();
-        int spawnChunkZ = world.getSpawnLocation().getChunk().getZ();
-
-        double minX = (spawnChunkX - radius) * 16.0;
-        double maxX = (spawnChunkX + radius + 1) * 16.0;
-        double minZ = (spawnChunkZ - radius) * 16.0;
-        double maxZ = (spawnChunkZ + radius + 1) * 16.0;
-
-        Object shape = reflection.createRectangle(minX, minZ, maxX, maxZ);
-        float y = (float) world.getSpawnLocation().getY();
-        Object marker = reflection.createShapeMarker(markerId, shape, y);
-        reflection.configureShapeMarker(marker,
-                "Zone de spawn",
-                reflection.createColor(255, 85, 85, 0.35f),
-                reflection.createColor(255, 85, 85, 1.0f),
-                buildSpawnDetail(world, radius));
-
-        markers.put(markerId, marker);
-    }
-
-    private String buildLoaderDetail(World world, ChunkLoaderLocation loader) {
-        int chunkX = Math.floorDiv(loader.x(), 16);
-        int chunkZ = Math.floorDiv(loader.z(), 16);
-        return new StringBuilder()
-                .append("<strong>Chunk Loader</strong><br/>")
-                .append("Monde : ").append(escape(world.getName())).append("<br/>")
-                .append("Chunk : ").append(chunkX).append(", ").append(chunkZ).append("<br/>")
-                .append("Position : ").append(loader.x()).append(", ")
-                .append(loader.y()).append(", ").append(loader.z()).append("<br/>")
-                .append("Rayon actif : ").append(plugin.getLoaderRadius()).append(" chunk(s)")
-                .toString();
-    }
-
-    private String buildLoaderAreaDetail(World world, ChunkLoaderLocation loader, int radius) {
-        int chunkX = Math.floorDiv(loader.x(), 16);
-        int chunkZ = Math.floorDiv(loader.z(), 16);
-        return new StringBuilder()
-                .append("<strong>Zone de chargement</strong><br/>")
-                .append("Monde : ").append(escape(world.getName())).append("<br/>")
-                .append("Chunk : ").append(chunkX).append(", ").append(chunkZ).append("<br/>")
-                .append("Rayon affiché : ").append(radius).append(" chunk(s)")
-                .toString();
-    }
-
-    private String buildSpawnDetail(World world, int radius) {
-        int chunkX = world.getSpawnLocation().getChunk().getX();
-        int chunkZ = world.getSpawnLocation().getChunk().getZ();
-        return new StringBuilder()
-                .append("<strong>Zone de spawn</strong><br/>")
-                .append("Monde : ").append(escape(world.getName())).append("<br/>")
-                .append("Chunk : ").append(chunkX).append(", ").append(chunkZ).append("<br/>")
-                .append("Rayon protégé : ").append(radius).append(" chunk(s)")
-                .toString();
-    }
-
-    private String escape(String input) {
-        if (input == null) {
-            return "";
-        }
-        return input.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
-    }
-
-    private static final class BlueMapReflection {
-        private final ChunksLoaderPlugin plugin;
-
-        private final MethodHandle apiOnEnable;
-        private final MethodHandle apiOnDisable;
-        private final MethodHandle apiUnregister;
-        private final MethodHandle apiGetInstance;
-        private final MethodHandle apiGetMaps;
-        private final MethodHandle apiGetWorld;
-        private final MethodHandle worldGetMaps;
-        private final MethodHandle mapGetMarkerSets;
-        private final MethodHandle mapGetId;
-
-        private final Constructor<?> markerSetConstructor;
-        private final MethodHandle markerSetSetLabel;
-        private final MethodHandle markerSetSetToggleable;
-        private final MethodHandle markerSetSetDefaultHidden;
-        private final MethodHandle markerSetSetHidden;
-        private final MethodHandle markerSetGetMarkers;
-        private final MethodHandle markerSetSetDirty;
-
-        private final Constructor<?> vectorConstructor;
-        private final Constructor<?> poiConstructor;
-        private final MethodHandle poiSetLabel;
-        private final MethodHandle poiSetDetail;
-
-        private final MethodHandle shapeCreateRect;
-        private final Constructor<?> shapeMarkerConstructor;
-        private final MethodHandle shapeMarkerSetLabel;
-        private final MethodHandle shapeMarkerSetFillColor;
-        private final MethodHandle shapeMarkerSetLineColor;
-        private final MethodHandle shapeMarkerSetDepthTest;
-        private final MethodHandle shapeMarkerSetDetail;
-
-        private final Constructor<?> colorConstructor;
-
-        private final MethodHandle mapRemoveMarkerSet;
-
-        private final Class<?> apiClass;
-
-        private BlueMapReflection(ChunksLoaderPlugin plugin,
-                                   MethodHandle apiOnEnable,
-                                   MethodHandle apiOnDisable,
-                                   MethodHandle apiUnregister,
-                                   MethodHandle apiGetInstance,
-                                   MethodHandle apiGetMaps,
-                                   MethodHandle apiGetWorld,
-                                   MethodHandle worldGetMaps,
-                                   MethodHandle mapGetMarkerSets,
-                                   MethodHandle mapGetId,
-                                   Constructor<?> markerSetConstructor,
-                                   MethodHandle markerSetSetLabel,
-                                   MethodHandle markerSetSetToggleable,
-                                   MethodHandle markerSetSetDefaultHidden,
-                                   MethodHandle markerSetSetHidden,
-                                   MethodHandle markerSetGetMarkers,
-                                   MethodHandle markerSetSetDirty,
-                                   Constructor<?> vectorConstructor,
-                                   Constructor<?> poiConstructor,
-                                   MethodHandle poiSetLabel,
-                                   MethodHandle poiSetDetail,
-                                   MethodHandle shapeCreateRect,
-                                   Constructor<?> shapeMarkerConstructor,
-                                   MethodHandle shapeMarkerSetLabel,
-                                   MethodHandle shapeMarkerSetFillColor,
-                                   MethodHandle shapeMarkerSetLineColor,
-                                   MethodHandle shapeMarkerSetDepthTest,
-                                   MethodHandle shapeMarkerSetDetail,
-                                   Constructor<?> colorConstructor,
-                                   MethodHandle mapRemoveMarkerSet,
-                                   Class<?> apiClass) {
-            this.plugin = plugin;
-            this.apiOnEnable = apiOnEnable;
-            this.apiOnDisable = apiOnDisable;
-            this.apiUnregister = apiUnregister;
-            this.apiGetInstance = apiGetInstance;
-            this.apiGetMaps = apiGetMaps;
-            this.apiGetWorld = apiGetWorld;
-            this.worldGetMaps = worldGetMaps;
-            this.mapGetMarkerSets = mapGetMarkerSets;
-            this.mapGetId = mapGetId;
-            this.markerSetConstructor = markerSetConstructor;
-            this.markerSetSetLabel = markerSetSetLabel;
-            this.markerSetSetToggleable = markerSetSetToggleable;
-            this.markerSetSetDefaultHidden = markerSetSetDefaultHidden;
-            this.markerSetSetHidden = markerSetSetHidden;
-            this.markerSetGetMarkers = markerSetGetMarkers;
-            this.markerSetSetDirty = markerSetSetDirty;
-            this.vectorConstructor = vectorConstructor;
-            this.poiConstructor = poiConstructor;
-            this.poiSetLabel = poiSetLabel;
-            this.poiSetDetail = poiSetDetail;
-            this.shapeCreateRect = shapeCreateRect;
-            this.shapeMarkerConstructor = shapeMarkerConstructor;
-            this.shapeMarkerSetLabel = shapeMarkerSetLabel;
-            this.shapeMarkerSetFillColor = shapeMarkerSetFillColor;
-            this.shapeMarkerSetLineColor = shapeMarkerSetLineColor;
-            this.shapeMarkerSetDepthTest = shapeMarkerSetDepthTest;
-            this.shapeMarkerSetDetail = shapeMarkerSetDetail;
-            this.colorConstructor = colorConstructor;
-            this.mapRemoveMarkerSet = mapRemoveMarkerSet;
-            this.apiClass = apiClass;
-        }
-
-        static BlueMapReflection create(ChunksLoaderPlugin plugin) {
-            try {
-                MethodHandles.Lookup lookup = MethodHandles.lookup();
-
-                Class<?> apiClass = Class.forName("de.bluecolored.bluemap.api.BlueMapAPI");
-                Class<?> worldClass = Class.forName("de.bluecolored.bluemap.api.BlueMapWorld");
-                Class<?> mapClass = Class.forName("de.bluecolored.bluemap.api.BlueMapMap");
-                Class<?> markerSetClass = Class.forName("de.bluecolored.bluemap.api.markers.MarkerSet");
-                Class<?> poiMarkerClass = Class.forName("de.bluecolored.bluemap.api.markers.POIMarker");
-                Class<?> shapeClass = Class.forName("de.bluecolored.bluemap.api.math.Shape");
-                Class<?> shapeMarkerClass = Class.forName("de.bluecolored.bluemap.api.markers.ShapeMarker");
-                Class<?> colorClass = Class.forName("de.bluecolored.bluemap.api.math.Color");
-
-                Class<?> vectorClass;
-                try {
-                    vectorClass = Class.forName("com.flowpowered.math.vector.Vector3d");
-                } catch (ClassNotFoundException ignored) {
-                    vectorClass = Class.forName("de.bluecolored.bluemap.api.math.Vector3d");
-                }
-
-                MethodHandle apiOnEnable = lookup.findStatic(apiClass, "onEnable", MethodType.methodType(void.class, Consumer.class));
-                MethodHandle apiOnDisable = lookup.findStatic(apiClass, "onDisable", MethodType.methodType(void.class, Consumer.class));
-                MethodHandle apiUnregister;
-                try {
-                    apiUnregister = lookup.findStatic(apiClass, "unregisterListener", MethodType.methodType(void.class, Consumer.class));
-                } catch (NoSuchMethodException exception) {
-                    apiUnregister = null;
-                }
-                MethodHandle apiGetInstance = lookup.findStatic(apiClass, "getInstance", MethodType.methodType(Optional.class));
-                MethodHandle apiGetMaps = lookup.findVirtual(apiClass, "getMaps", MethodType.methodType(Collection.class));
-                MethodHandle apiGetWorld = lookup.findVirtual(apiClass, "getWorld", MethodType.methodType(Optional.class, Object.class));
-                MethodHandle worldGetMaps = lookup.findVirtual(worldClass, "getMaps", MethodType.methodType(Collection.class));
-                MethodHandle mapGetMarkerSets = lookup.findVirtual(mapClass, "getMarkerSets", MethodType.methodType(Map.class));
-                MethodHandle mapGetId = lookup.findVirtual(mapClass, "getId", MethodType.methodType(String.class));
-
-                Constructor<?> markerSetConstructor = markerSetClass.getConstructor(String.class);
-                MethodHandle markerSetSetLabel = lookup.findVirtual(markerSetClass, "setLabel", MethodType.methodType(void.class, String.class));
-                MethodHandle markerSetSetToggleable = lookup.findVirtual(markerSetClass, "setToggleable", MethodType.methodType(void.class, boolean.class));
-
-                MethodHandle markerSetSetDefaultHidden;
-                try {
-                    markerSetSetDefaultHidden = lookup.findVirtual(markerSetClass, "setDefaultHidden", MethodType.methodType(void.class, boolean.class));
-                } catch (NoSuchMethodException exception) {
-                    markerSetSetDefaultHidden = null;
-                }
-
-                MethodHandle markerSetSetHidden;
-                try {
-                    markerSetSetHidden = lookup.findVirtual(markerSetClass, "setHidden", MethodType.methodType(void.class, boolean.class));
-                } catch (NoSuchMethodException exception) {
-                    markerSetSetHidden = null;
-                }
-
-                MethodHandle markerSetGetMarkers = lookup.findVirtual(markerSetClass, "getMarkers", MethodType.methodType(Map.class));
-
-                MethodHandle markerSetSetDirty;
-                try {
-                    markerSetSetDirty = lookup.findVirtual(markerSetClass, "setDirty", MethodType.methodType(void.class));
-                } catch (NoSuchMethodException first) {
-                    try {
-                        markerSetSetDirty = lookup.findVirtual(markerSetClass, "setDirty", MethodType.methodType(void.class, boolean.class));
-                    } catch (NoSuchMethodException second) {
-                        markerSetSetDirty = null;
-                    }
-                }
-
-                Constructor<?> vectorConstructor = vectorClass.getConstructor(double.class, double.class, double.class);
-                Constructor<?> poiConstructor = poiMarkerClass.getConstructor(String.class, vectorClass);
-                MethodHandle poiSetLabel = lookup.findVirtual(poiMarkerClass, "setLabel", MethodType.methodType(void.class, String.class));
-
-                MethodHandle poiSetDetail;
-                try {
-                    poiSetDetail = lookup.findVirtual(poiMarkerClass, "setDetail", MethodType.methodType(void.class, String.class));
-                } catch (NoSuchMethodException exception) {
-                    poiSetDetail = null;
-                }
-
-                MethodHandle shapeCreateRect = lookup.findStatic(shapeClass, "createRect", MethodType.methodType(shapeClass, double.class, double.class, double.class, double.class));
-                Constructor<?> shapeMarkerConstructor = shapeMarkerClass.getConstructor(String.class, shapeClass, float.class);
-                MethodHandle shapeMarkerSetLabel = lookup.findVirtual(shapeMarkerClass, "setLabel", MethodType.methodType(void.class, String.class));
-                MethodHandle shapeMarkerSetFillColor = lookup.findVirtual(shapeMarkerClass, "setFillColor", MethodType.methodType(void.class, colorClass));
-                MethodHandle shapeMarkerSetLineColor = lookup.findVirtual(shapeMarkerClass, "setLineColor", MethodType.methodType(void.class, colorClass));
-
-                MethodHandle shapeMarkerSetDepthTest;
-                try {
-                    shapeMarkerSetDepthTest = lookup.findVirtual(shapeMarkerClass, "setDepthTestEnabled", MethodType.methodType(void.class, boolean.class));
-                } catch (NoSuchMethodException exception) {
-                    shapeMarkerSetDepthTest = null;
-                }
-
-                MethodHandle shapeMarkerSetDetail;
-                try {
-                    shapeMarkerSetDetail = lookup.findVirtual(shapeMarkerClass, "setDetail", MethodType.methodType(void.class, String.class));
-                } catch (NoSuchMethodException exception) {
-                    shapeMarkerSetDetail = null;
-                }
-
-                Constructor<?> colorConstructor = colorClass.getConstructor(int.class, int.class, int.class, float.class);
-
-                MethodHandle mapRemoveMarkerSet;
-                try {
-                    mapRemoveMarkerSet = lookup.findVirtual(mapClass, "removeMarkerSet", MethodType.methodType(void.class, String.class));
-                } catch (NoSuchMethodException exception) {
-                    mapRemoveMarkerSet = null;
-                }
-
-                return new BlueMapReflection(plugin,
-                        apiOnEnable,
-                        apiOnDisable,
-                        apiUnregister,
-                        apiGetInstance,
-                        apiGetMaps,
-                        apiGetWorld,
-                        worldGetMaps,
-                        mapGetMarkerSets,
-                        mapGetId,
-                        markerSetConstructor,
-                        markerSetSetLabel,
-                        markerSetSetToggleable,
-                        markerSetSetDefaultHidden,
-                        markerSetSetHidden,
-                        markerSetGetMarkers,
-                        markerSetSetDirty,
-                        vectorConstructor,
-                        poiConstructor,
-                        poiSetLabel,
-                        poiSetDetail,
-                        shapeCreateRect,
-                        shapeMarkerConstructor,
-                        shapeMarkerSetLabel,
-                        shapeMarkerSetFillColor,
-                        shapeMarkerSetLineColor,
-                        shapeMarkerSetDepthTest,
-                        shapeMarkerSetDetail,
-                        colorConstructor,
-                        mapRemoveMarkerSet,
-                        apiClass);
-            } catch (Throwable throwable) {
-                plugin.getLogger().log(Level.WARNING, "Impossible d'initialiser la réflexion BlueMap", throwable);
-                return null;
-            }
-        }
-
-        void registerEnableListener(Consumer<Object> listener) throws Throwable {
-            apiOnEnable.invokeWithArguments(listener);
-        }
-
-        void registerDisableListener(Consumer<Object> listener) throws Throwable {
-            apiOnDisable.invokeWithArguments(listener);
-        }
-
-        void unregisterListener(Consumer<Object> listener) throws Throwable {
-            if (apiUnregister == null) {
-                return;
-            }
-            apiUnregister.invokeWithArguments(listener);
-        }
-
-        Optional<Object> getCurrentInstance() {
-            try {
-                return (Optional<Object>) apiGetInstance.invokeWithArguments();
-            } catch (Throwable throwable) {
-                plugin.getLogger().log(Level.FINER, "Impossible de récupérer l'instance BlueMap courante", throwable);
-                return Optional.empty();
-            }
-        }
-
-        Collection<Object> getMaps(Object api) throws Throwable {
-            return (Collection<Object>) apiGetMaps.invoke(api);
-        }
-
-        Optional<Object> getWorld(Object api, World world) throws Throwable {
-            return (Optional<Object>) apiGetWorld.invoke(api, world);
-        }
-
-        Collection<Object> getWorldMaps(Object blueWorld) throws Throwable {
-            return (Collection<Object>) worldGetMaps.invoke(blueWorld);
-        }
-
-        Map<String, Object> getMarkerSetMap(Object map) throws Throwable {
-            return (Map<String, Object>) mapGetMarkerSets.invoke(map);
-        }
-
-        String getMapId(Object map) throws Throwable {
-            return (String) mapGetId.invoke(map);
-        }
-
-        Object ensureMarkerSet(Object map, String markerSetId, String label) throws Throwable {
-            Map<String, Object> sets = getMarkerSetMap(map);
-            Object markerSet = sets.get(markerSetId);
-            if (markerSet == null) {
-                markerSet = markerSetConstructor.newInstance(markerSetId);
-                markerSetSetLabel.invoke(markerSet, label);
-                markerSetSetToggleable.invoke(markerSet, true);
-                if (markerSetSetDefaultHidden != null) {
-                    markerSetSetDefaultHidden.invoke(markerSet, false);
-                }
-                if (markerSetSetHidden != null) {
-                    markerSetSetHidden.invoke(markerSet, false);
-                }
-                sets.put(markerSetId, markerSet);
-            } else {
-                markerSetSetLabel.invoke(markerSet, label);
-                markerSetSetToggleable.invoke(markerSet, true);
-                if (markerSetSetHidden != null) {
-                    markerSetSetHidden.invoke(markerSet, false);
-                }
-            }
-            return markerSet;
-        }
-
-        void clearMarkerSet(Object markerSet) throws Throwable {
-            Map<String, Object> markers = getMarkers(markerSet);
-            markers.clear();
-        }
-
-        Map<String, Object> getMarkers(Object markerSet) throws Throwable {
-            return (Map<String, Object>) markerSetGetMarkers.invoke(markerSet);
-        }
-
-        void markDirty(Object markerSet) {
-            if (markerSetSetDirty == null) {
-                return;
-            }
-            try {
-                int parameters = markerSetSetDirty.type().parameterCount();
-                if (parameters == 1) {
-                    markerSetSetDirty.invoke(markerSet);
-                } else if (parameters == 2) {
-                    markerSetSetDirty.invoke(markerSet, true);
-                } else {
-                    markerSetSetDirty.invokeWithArguments(markerSet);
-                }
-            } catch (Throwable throwable) {
-                plugin.getLogger().log(Level.FINER, "Impossible de marquer le calque BlueMap", throwable);
-            }
-        }
-
-        Object createVector(double x, double y, double z) throws InstantiationException, IllegalAccessException, InvocationTargetException {
-            return vectorConstructor.newInstance(x, y, z);
-        }
-
-        Object createPoiMarker(String id, Object position, String label) throws Throwable {
-            Object marker = poiConstructor.newInstance(id, position);
-            poiSetLabel.invoke(marker, label);
-            return marker;
-        }
-
-        void setPoiDetail(Object marker, String detail) {
-            if (poiSetDetail == null || detail == null || detail.isBlank()) {
-                return;
-            }
-            try {
-                poiSetDetail.invoke(marker, detail);
-            } catch (Throwable throwable) {
-                plugin.getLogger().log(Level.FINER, "Impossible de définir le détail du marqueur POI BlueMap", throwable);
-            }
-        }
-
-        Object createRectangle(double minX, double minZ, double maxX, double maxZ) throws Throwable {
-            return shapeCreateRect.invokeWithArguments(minX, minZ, maxX, maxZ);
-        }
-
-        Object createShapeMarker(String id, Object shape, float y) throws InstantiationException, IllegalAccessException, InvocationTargetException {
-            return shapeMarkerConstructor.newInstance(id, shape, y);
-        }
-
-        void configureShapeMarker(Object marker, String label, Object fill, Object line, String detail) throws Throwable {
-            shapeMarkerSetLabel.invoke(marker, label);
-            shapeMarkerSetFillColor.invoke(marker, fill);
-            shapeMarkerSetLineColor.invoke(marker, line);
-            if (shapeMarkerSetDepthTest != null) {
-                shapeMarkerSetDepthTest.invoke(marker, false);
-            }
-            setShapeMarkerDetail(marker, detail);
-        }
-
-        private void setShapeMarkerDetail(Object marker, String detail) {
-            if (shapeMarkerSetDetail == null || detail == null || detail.isBlank()) {
-                return;
-            }
-            try {
-                shapeMarkerSetDetail.invoke(marker, detail);
-            } catch (Throwable throwable) {
-                plugin.getLogger().log(Level.FINER, "Impossible de définir le détail du marqueur BlueMap", throwable);
-            }
-        }
-
-        Object createColor(int r, int g, int b, float alpha) throws InstantiationException, IllegalAccessException, InvocationTargetException {
-            return colorConstructor.newInstance(r, g, b, alpha);
-        }
-
-        void removeMarkerSet(Object map, String markerSetId) throws Throwable {
-            if (mapRemoveMarkerSet != null) {
-                mapRemoveMarkerSet.invoke(map, markerSetId);
-            } else {
-                getMarkerSetMap(map).remove(markerSetId);
-            }
-        }
-
-        void removeMarkerSetById(String mapId, String markerSetId, Object apiInstance) throws Throwable {
-            for (Object map : getMaps(apiInstance)) {
-                String id = getMapId(map);
-                if (!mapId.equals(id)) {
-                    continue;
-                }
-                removeMarkerSet(map, markerSetId);
-                break;
-            }
-        }
+        worldCache.clear();
     }
 }

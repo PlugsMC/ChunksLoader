@@ -7,13 +7,19 @@ for every compatible version and ship them as release assets.
 ## Building
 
 ```sh
-mvn -DskipTests package
+./gradlew build
 ```
 
+> **Note:** The Gradle wrapper jar is stored in a Base64-encoded form at
+> `gradle/wrapper/gradle-wrapper.jar.base64`. Running `./gradlew` restores the
+> jar automatically. If you prefer to invoke Gradle directly, decode the file
+> yourself with `base64 -d gradle/wrapper/gradle-wrapper.jar.base64 >
+> gradle/wrapper/gradle-wrapper.jar` before running any tasks.
+
 The command above generates a shaded jar named using the pattern
-`ChunksLoader-<minecraft-version>-v<plugin-version>.jar` and places it in both
-`target/` and the repository-level `assets/` directory. By default the Minecraft
-version is set to **1.21.9**.
+`ChunksLoader-<minecraft-version>-<release-tag>.jar` and places it in both
+`build/libs/` and the repository-level `assets/` directory. By default the
+Minecraft version is set to **1.21.9**.
 
 To produce jars for every supported Minecraft version in one go, use the helper
 script:
@@ -25,7 +31,7 @@ script:
 The script reads the supported Minecraft versions from
 `supported-versions.txt`, recompiles the plugin for each entry, and ensures that
 every resulting jar is copied into the `assets/` directory using the
-`ChunksLoader-<minecraft-version>-v<plugin-version>.jar` naming scheme so they
+`ChunksLoader-<minecraft-version>-<release-tag>.jar` naming scheme so they
 can be uploaded directly to a release.
 
 ## Configuration

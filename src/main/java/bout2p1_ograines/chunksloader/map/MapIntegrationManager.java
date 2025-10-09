@@ -28,7 +28,7 @@ public final class MapIntegrationManager implements ChunkLoaderListener {
     public void initialize() {
         dynmapIntegration = DynmapIntegration.create(plugin)
             .map(integration -> {
-                plugin.getLogger().info("Intégration Dynmap activée.");
+                plugin.getLogger().info("Dynmap integration enabled.");
                 return integration;
             })
             .orElse(null);
@@ -67,7 +67,7 @@ public final class MapIntegrationManager implements ChunkLoaderListener {
             return;
         }
         blueMapIntegration = new BlueMapIntegration(plugin, api);
-        plugin.getLogger().info("Intégration BlueMap activée.");
+        plugin.getLogger().info("BlueMap integration enabled.");
         updateAll();
     }
 
@@ -75,7 +75,7 @@ public final class MapIntegrationManager implements ChunkLoaderListener {
         if (blueMapIntegration != null && blueMapIntegration.isFor(api)) {
             blueMapIntegration.shutdown();
             blueMapIntegration = null;
-            plugin.getLogger().info("Intégration BlueMap désactivée.");
+            plugin.getLogger().info("BlueMap integration disabled.");
         }
     }
 }

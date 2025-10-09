@@ -8,7 +8,7 @@ softdepend:
   - BlueMap
 commands:
   chunksloader:
-    description: Gestion des chunk loaders
+    description: Manage chunk loaders
     usage: /<command> give|map
     permission: chunksloader.use
 permissions:

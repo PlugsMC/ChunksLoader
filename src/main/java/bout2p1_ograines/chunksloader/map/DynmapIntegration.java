@@ -1,212 +1,211 @@
 package bout2p1_ograines.chunksloader.map;
 
-import bout2p1_ograines.chunksloader.ChunkLoaderLocation;
-import bout2p1_ograines.chunksloader.ChunkLoaderManager;
 import bout2p1_ograines.chunksloader.ChunksLoaderPlugin;
 
-import org.bukkit.Bukkit;
-import org.bukkit.World;
-import org.bukkit.plugin.Plugin;
-
 import java.lang.reflect.Method;
+import java.util.Collection;
 import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
+import java.util.logging.Level;
 
-public class DynmapIntegration implements MapIntegration {
-    private static final String MARKER_SET_ID = "chunksloader";
-    private static final String SPAWN_MARKER_ID_PREFIX = "spawn_";
-    private static final String LOADER_MARKER_PREFIX = "loader_";
+public final class DynmapIntegration implements MapIntegration {
+
+    private static final String MARKER_SET_ID = "chunkloader";
+    private static final int ACTIVE_COLOR = 0x2ECC71;
+    private static final int INACTIVE_COLOR = 0xE74C3C;
 
     private final ChunksLoaderPlugin plugin;
-    private final ChunkLoaderManager manager;
+    private final Object markerSet;
 
-    private Object markerAPI;
-    private Object markerSet;
-    private Object markerIcon;
-    private boolean active;
+    private final Method findAreaMarker;
+    private final Method createAreaMarker;
+    private final Method getAreaMarkers;
+    private final Method deleteMarker;
+    private final Method getMarkerId;
+    private final Method setLabel;
+    private final Method setDescription;
+    private final Method setCornerLocations;
+    private final Method setRangeY;
+    private final Method setLineStyle;
+    private final Method setFillStyle;
+    private final Method setMarkerSetLabel;
+    private final Method setHideByDefault;
+    private final Method setLayerPriority;
 
-    private Class<?> markerApiClass;
-    private Class<?> markerSetClass;
-    private Class<?> areaMarkerClass;
-    private Class<?> markerIconClass;
-    private Method deleteMethod;
-    private Method createMarkerMethod;
-    private Method createAreaMarkerMethod;
-    private Method setFillStyleMethod;
-    private Method setLineStyleMethod;
-
-    public DynmapIntegration(ChunksLoaderPlugin plugin) {
+    private DynmapIntegration(ChunksLoaderPlugin plugin, Object markerSet,
+                              Method findAreaMarker, Method createAreaMarker, Method getAreaMarkers,
+                              Method deleteMarker, Method getMarkerId, Method setLabel,
+                              Method setDescription, Method setCornerLocations, Method setRangeY,
+                              Method setLineStyle, Method setFillStyle, Method setMarkerSetLabel,
+                              Method setHideByDefault, Method setLayerPriority) {
         this.plugin = plugin;
-        this.manager = plugin.getManager();
+        this.markerSet = markerSet;
+        this.findAreaMarker = findAreaMarker;
+        this.createAreaMarker = createAreaMarker;
+        this.getAreaMarkers = getAreaMarkers;
+        this.deleteMarker = deleteMarker;
+        this.getMarkerId = getMarkerId;
+        this.setLabel = setLabel;
+        this.setDescription = setDescription;
+        this.setCornerLocations = setCornerLocations;
+        this.setRangeY = setRangeY;
+        this.setLineStyle = setLineStyle;
+        this.setFillStyle = setFillStyle;
+        this.setMarkerSetLabel = setMarkerSetLabel;
+        this.setHideByDefault = setHideByDefault;
+        this.setLayerPriority = setLayerPriority;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
-    public boolean initialize() {
-        Plugin dynmapPlugin = Bukkit.getPluginManager().getPlugin("dynmap");
-        if (dynmapPlugin == null) {
-            return false;
-        }
-
+    public void update(Collection<LoaderData> loaders) {
         try {
-            Class<?> dynmapApiClass = Class.forName("org.dynmap.DynmapAPI");
-            if (!dynmapApiClass.isInstance(dynmapPlugin)) {
-                plugin.getLogger().warning("Plugin dynmap détecté mais API incompatible.");
-                return false;
+            setMarkerSetLabel.invoke(markerSet, "Chunk Loaders");
+            setHideByDefault.invoke(markerSet, Boolean.FALSE);
+            setLayerPriority.invoke(markerSet, 10);
+
+            Set<String> expected = new HashSet<>();
+            for (LoaderData loader : loaders) {
+                String id = loader.id();
+                expected.add(id);
+                Object area = findAreaMarker.invoke(markerSet, id);
+                double[] x = rectangleX(loader);
+                double[] z = rectangleZ(loader);
+                if (area == null) {
+                    area = createAreaMarker.invoke(markerSet, id, loader.plainDisplayName(), false, loader.worldName(), x, z, true);
+                    if (area == null) {
+                        continue;
+                    }
+                } else {
+                    setCornerLocations.invoke(area, x, z);
+                }
+
+                setLabel.invoke(area, loader.plainDisplayName());
+                setDescription.invoke(area, buildDescription(loader));
+                setRangeY.invoke(area, (double) loader.blockY() + 1.0d, (double) loader.blockY());
+                int color = loader.active() ? ACTIVE_COLOR : INACTIVE_COLOR;
+                double fill = loader.active() ? 0.35d : 0.2d;
+                setLineStyle.invoke(area, 2, 1.0d, color);
+                setFillStyle.invoke(area, fill, color);
             }
 
-            markerApiClass = Class.forName("org.dynmap.markers.MarkerAPI");
-            markerSetClass = Class.forName("org.dynmap.markers.MarkerSet");
-            areaMarkerClass = Class.forName("org.dynmap.markers.AreaMarker");
-            markerIconClass = Class.forName("org.dynmap.markers.MarkerIcon");
-            deleteMethod = Class.forName("org.dynmap.markers.GenericMarker").getMethod("deleteMarker");
-            createMarkerMethod = markerSetClass.getMethod("createMarker", String.class, String.class, String.class,
-                    double.class, double.class, double.class, markerIconClass, boolean.class);
-            createAreaMarkerMethod = markerSetClass.getMethod("createAreaMarker", String.class, String.class, boolean.class,
-                    String.class, double[].class, double[].class, boolean.class);
-            setFillStyleMethod = areaMarkerClass.getMethod("setFillStyle", double.class, int.class);
-            setLineStyleMethod = areaMarkerClass.getMethod("setLineStyle", int.class, double.class, int.class);
-
-            markerAPI = dynmapApiClass.getMethod("getMarkerAPI").invoke(dynmapPlugin);
-            if (markerAPI == null) {
-                plugin.getLogger().warning("Impossible d'obtenir l'API des marqueurs Dynmap.");
-                return false;
-            }
-
-            markerSet = markerApiClass.getMethod("getMarkerSet", String.class).invoke(markerAPI, MARKER_SET_ID);
-            if (markerSet == null) {
-                markerSet = markerApiClass
-                        .getMethod("createMarkerSet", String.class, String.class, Set.class, boolean.class)
-                        .invoke(markerAPI, MARKER_SET_ID, "Chunk Loaders", null, true);
-            } else {
-                markerSetClass.getMethod("setMarkerSetLabel", String.class).invoke(markerSet, "Chunk Loaders");
-            }
-
-            if (markerSet == null) {
-                plugin.getLogger().warning("Impossible de créer le calque Dynmap pour les chunk loaders.");
-                return false;
-            }
-
-            markerIcon = markerApiClass.getMethod("getMarkerIcon", String.class).invoke(markerAPI, "default");
-            if (markerIcon == null) {
-                Set<?> icons = (Set<?>) markerApiClass.getMethod("getMarkerIcons").invoke(markerAPI);
-                if (icons != null && !icons.isEmpty()) {
-                    markerIcon = icons.iterator().next();
+            Set<Object> existing = (Set<Object>) getAreaMarkers.invoke(markerSet);
+            for (Object marker : existing) {
+                String id = (String) getMarkerId.invoke(marker);
+                if (!expected.contains(id)) {
+                    deleteMarker.invoke(marker);
                 }
             }
-
-            active = true;
-            return true;
-        } catch (ReflectiveOperationException exception) {
-            plugin.getLogger().warning("Échec de l'initialisation Dynmap : " + exception.getMessage());
-            return false;
+        } catch (Exception exception) {
+            plugin.getLogger().log(Level.WARNING, "Impossible de mettre à jour les marqueurs Dynmap", exception);
         }
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public void shutdown() {
-        if (!active) {
-            return;
-        }
-        Runnable task = () -> {
-            try {
-                clearMarkers();
-                if (markerSet != null) {
-                    markerSetClass.getMethod("deleteMarkerSet").invoke(markerSet);
-                }
-            } catch (ReflectiveOperationException exception) {
-                plugin.getLogger().warning("Impossible de nettoyer Dynmap : " + exception.getMessage());
-            } finally {
-                active = false;
-                markerAPI = null;
-                markerSet = null;
-                markerIcon = null;
-            }
-        };
-
-        if (Bukkit.isPrimaryThread()) {
-            task.run();
-        } else {
-            Bukkit.getScheduler().runTask(plugin, task);
-        }
-    }
-
-    @Override
-    public void onLoadersChanged(World world) {
-        if (!active) {
-            return;
-        }
-        Runnable updateTask = this::updateMarkers;
-        if (Bukkit.isPrimaryThread()) {
-            updateTask.run();
-        } else {
-            Bukkit.getScheduler().runTask(plugin, updateTask);
-        }
-    }
-
-    private void updateMarkers() {
-        if (!active || markerSet == null) {
-            return;
-        }
-
         try {
-            clearMarkers();
-            for (World world : Bukkit.getWorlds()) {
-                addSpawnMarker(world);
-                for (ChunkLoaderLocation loader : manager.getLoaders(world.getUID())) {
-                    addLoaderMarker(world, loader);
-                }
+            Set<Object> existing = (Set<Object>) getAreaMarkers.invoke(markerSet);
+            for (Object marker : existing) {
+                deleteMarker.invoke(marker);
             }
-        } catch (ReflectiveOperationException exception) {
-            plugin.getLogger().warning("Erreur lors de la mise à jour Dynmap : " + exception.getMessage());
+        } catch (Exception exception) {
+            plugin.getLogger().log(Level.WARNING, "Impossible de nettoyer les marqueurs Dynmap", exception);
         }
     }
 
-    private void clearMarkers() throws ReflectiveOperationException {
-        if (markerSet == null) {
-            return;
-        }
-        Set<?> markers = new HashSet<>((Set<?>) markerSetClass.getMethod("getMarkers").invoke(markerSet));
-        for (Object marker : markers) {
-            deleteMethod.invoke(marker);
-        }
-        Set<?> areas = new HashSet<>((Set<?>) markerSetClass.getMethod("getAreaMarkers").invoke(markerSet));
-        for (Object area : areas) {
-            deleteMethod.invoke(area);
-        }
+    private String buildDescription(LoaderData loader) {
+        return new StringBuilder()
+            .append("<strong>").append(html(loader.plainDisplayName())).append("</strong><br/>")
+            .append("Propriétaire : ").append(html(loader.ownerLabel())).append("<br/>")
+            .append("Rayon : ").append(loader.radius()).append(" chunk(s)<br/>")
+            .append("Chunks : ").append(loader.chunkCount()).append("<br/>")
+            .append("État : ").append(loader.statusLabel()).append("<br/>")
+            .append("Position : ").append(loader.blockX()).append(", ")
+            .append(loader.blockY()).append(", ").append(loader.blockZ())
+            .toString();
     }
 
-    private void addLoaderMarker(World world, ChunkLoaderLocation loader) throws ReflectiveOperationException {
-        if (markerSet == null) {
-            return;
-        }
-        if (!manager.isLoaderActive(loader)) {
-            return;
-        }
-        String markerId = LOADER_MARKER_PREFIX + loader.worldId() + "_" + loader.x() + "_" + loader.y() + "_" + loader.z();
-        String label = "Chunk Loader (" + world.getName() + ")";
-        createMarkerMethod.invoke(markerSet, markerId, label, world.getName(), loader.x() + 0.5, loader.y() + 0.5,
-                loader.z() + 0.5, markerIcon, false);
+    private String html(String input) {
+        return input.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
-    private void addSpawnMarker(World world) throws ReflectiveOperationException {
-        if (markerSet == null) {
-            return;
-        }
-        int radius = plugin.getLoaderRadius();
-        int spawnChunkX = world.getSpawnLocation().getChunk().getX();
-        int spawnChunkZ = world.getSpawnLocation().getChunk().getZ();
-        double minX = (spawnChunkX - radius) * 16.0;
-        double maxX = (spawnChunkX + radius + 1) * 16.0;
-        double minZ = (spawnChunkZ - radius) * 16.0;
-        double maxZ = (spawnChunkZ + radius + 1) * 16.0;
-        double[] xCorners = new double[] {minX, maxX, maxX, minX};
-        double[] zCorners = new double[] {minZ, minZ, maxZ, maxZ};
-        String markerId = SPAWN_MARKER_ID_PREFIX + world.getUID();
-        Object area = createAreaMarkerMethod.invoke(markerSet, markerId, "Zone de spawn", false, world.getName(),
-                xCorners, zCorners, false);
-        if (area != null) {
-            setFillStyleMethod.invoke(area, 0.35D, 0xAA0000);
-            setLineStyleMethod.invoke(area, 3, 0.8D, 0xFF0000);
+    private double[] rectangleX(LoaderData loader) {
+        return new double[]{loader.minX(), loader.maxX(), loader.maxX(), loader.minX()};
+    }
+
+    private double[] rectangleZ(LoaderData loader) {
+        return new double[]{loader.minZ(), loader.minZ(), loader.maxZ(), loader.maxZ()};
+    }
+
+    public static Optional<DynmapIntegration> create(ChunksLoaderPlugin plugin) {
+        try {
+            Class<?> dynmapApiClass = Class.forName("org.dynmap.DynmapAPI");
+            Object dynmapPlugin = plugin.getServer().getPluginManager().getPlugin("dynmap");
+            if (dynmapPlugin == null || !dynmapApiClass.isInstance(dynmapPlugin)) {
+                return Optional.empty();
+            }
+
+            Method getMarkerAPI = dynmapApiClass.getMethod("getMarkerAPI");
+            Object markerApi = getMarkerAPI.invoke(dynmapPlugin);
+            if (markerApi == null) {
+                return Optional.empty();
+            }
+
+            Class<?> markerApiClass = Class.forName("org.dynmap.markers.MarkerAPI");
+            Class<?> markerSetClass = Class.forName("org.dynmap.markers.MarkerSet");
+            Class<?> areaMarkerClass = Class.forName("org.dynmap.markers.AreaMarker");
+            Class<?> genericMarkerClass = Class.forName("org.dynmap.markers.GenericMarker");
+
+            Method getMarkerSet = markerApiClass.getMethod("getMarkerSet", String.class);
+            Method createMarkerSet = markerApiClass.getMethod("createMarkerSet", String.class, String.class, Set.class, boolean.class);
+            Object markerSet = getMarkerSet.invoke(markerApi, MARKER_SET_ID);
+            if (markerSet == null) {
+                markerSet = createMarkerSet.invoke(markerApi, MARKER_SET_ID, "Chunk Loaders", null, true);
+            }
+            if (markerSet == null) {
+                return Optional.empty();
+            }
+
+            Method findAreaMarker = markerSetClass.getMethod("findAreaMarker", String.class);
+            Method createAreaMarker = markerSetClass.getMethod("createAreaMarker", String.class, String.class, boolean.class, String.class, double[].class, double[].class, boolean.class);
+            Method getAreaMarkers = markerSetClass.getMethod("getAreaMarkers");
+            Method deleteMarker = genericMarkerClass.getMethod("deleteMarker");
+            Method getMarkerId = genericMarkerClass.getMethod("getMarkerID");
+            Method setLabel = genericMarkerClass.getMethod("setLabel", String.class);
+            Method setDescription = areaMarkerClass.getMethod("setDescription", String.class);
+            Method setCornerLocations = areaMarkerClass.getMethod("setCornerLocations", double[].class, double[].class);
+            Method setRangeY = areaMarkerClass.getMethod("setRangeY", double.class, double.class);
+            Method setLineStyle = areaMarkerClass.getMethod("setLineStyle", int.class, double.class, int.class);
+            Method setFillStyle = areaMarkerClass.getMethod("setFillStyle", double.class, int.class);
+            Method setMarkerSetLabel = markerSetClass.getMethod("setMarkerSetLabel", String.class);
+            Method setHideByDefault = markerSetClass.getMethod("setHideByDefault", boolean.class);
+            Method setLayerPriority = markerSetClass.getMethod("setLayerPriority", int.class);
+
+            return Optional.of(new DynmapIntegration(
+                plugin,
+                markerSet,
+                findAreaMarker,
+                createAreaMarker,
+                getAreaMarkers,
+                deleteMarker,
+                getMarkerId,
+                setLabel,
+                setDescription,
+                setCornerLocations,
+                setRangeY,
+                setLineStyle,
+                setFillStyle,
+                setMarkerSetLabel,
+                setHideByDefault,
+                setLayerPriority
+            ));
+        } catch (ClassNotFoundException ignored) {
+            return Optional.empty();
+        } catch (Exception exception) {
+            plugin.getLogger().log(Level.WARNING, "Impossible d'initialiser l'intégration Dynmap", exception);
+            return Optional.empty();
         }
     }
 }

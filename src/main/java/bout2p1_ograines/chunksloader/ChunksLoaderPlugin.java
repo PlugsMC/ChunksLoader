@@ -1,8 +1,7 @@
 package bout2p1_ograines.chunksloader;
 
-import bout2p1_ograines.chunksloader.map.BlueMapIntegration;
-import bout2p1_ograines.chunksloader.map.DynmapIntegration;
-import bout2p1_ograines.chunksloader.map.MapIntegration;
+import bout2p1_ograines.chunksloader.map.LoaderData;
+import bout2p1_ograines.chunksloader.map.MapIntegrationManager;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -19,7 +18,7 @@ import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
-import org.bukkit.event.server.PluginEnableEvent;
+import org.bukkit.World;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Inventory;
@@ -30,12 +29,11 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
-import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.scheduler.BukkitTask;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
@@ -50,9 +48,7 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
     private ChunkLoaderManager manager;
     private int loaderRadius;
     private int mapRadius;
-    private final List<MapIntegration> mapIntegrations = new ArrayList<>();
-    private BlueMapIntegration blueMapIntegration;
-    private BukkitTask blueMapInitializationTask;
+    private MapIntegrationManager mapIntegrationManager;
 
     @Override
     public void onEnable() {
@@ -61,9 +57,11 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
 
         this.itemKey = new NamespacedKey(this, "chunk_loader_item");
         this.manager = new ChunkLoaderManager(this);
+        this.mapIntegrationManager = new MapIntegrationManager(this);
+        manager.addListener(mapIntegrationManager);
+        mapIntegrationManager.initialize();
         manager.load();
-
-        setupMapIntegrations();
+        mapIntegrationManager.updateAll();
 
         Bukkit.getPluginManager().registerEvents(this, this);
 
@@ -90,17 +88,11 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
 
     @Override
     public void onDisable() {
-        cancelBlueMapInitializationTask();
-        for (MapIntegration integration : mapIntegrations) {
-            try {
-                manager.removeListener(integration);
-                integration.shutdown();
-            } catch (Exception exception) {
-                getLogger().warning("Erreur lors de l'arrêt d'une intégration carte : " + exception.getMessage());
-            }
+        if (mapIntegrationManager != null) {
+            manager.removeListener(mapIntegrationManager);
+            mapIntegrationManager.shutdown();
+            mapIntegrationManager = null;
         }
-        mapIntegrations.clear();
-        blueMapIntegration = null;
         manager.clearAllForcedChunks();
         manager.save();
     }
@@ -117,6 +109,41 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         return mapRadius;
     }
 
+    public List<LoaderData> getLoaderData() {
+        List<LoaderData> loaders = new ArrayList<>();
+        int radius = getLoaderRadius();
+        int diameter = (radius * 2) + 1;
+        int chunkCount = diameter * diameter;
+        for (World world : Bukkit.getWorlds()) {
+            Map<ChunkLoaderLocation, Boolean> states = manager.getLoaderStates(world.getUID());
+            for (Map.Entry<ChunkLoaderLocation, Boolean> entry : states.entrySet()) {
+                ChunkLoaderLocation location = entry.getKey();
+                boolean active = entry.getValue() != null && entry.getValue();
+                int chunkX = Math.floorDiv(location.x(), 16);
+                int chunkZ = Math.floorDiv(location.z(), 16);
+                String id = world.getUID() + ":" + location.x() + ":" + location.y() + ":" + location.z();
+                String plainName = "Chunk Loader";
+                loaders.add(new LoaderData(
+                    id,
+                    world.getName(),
+                    location.x(),
+                    location.y(),
+                    location.z(),
+                    chunkX,
+                    chunkZ,
+                    radius,
+                    chunkCount,
+                    active,
+                    plainName,
+                    plainName,
+                    null,
+                    0L
+                ));
+            }
+        }
+        return loaders;
+    }
+
     private void reloadConfigValues() {
         FileConfiguration configuration = getConfig();
         configuration.addDefault(CONFIG_RADIUS, 1);
@@ -125,80 +152,6 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         saveConfig();
         loaderRadius = Math.max(0, configuration.getInt(CONFIG_RADIUS, 1));
         mapRadius = Math.max(1, configuration.getInt(CONFIG_MAP_RADIUS, 5));
-    }
-
-    private void setupMapIntegrations() {
-        mapIntegrations.clear();
-
-        DynmapIntegration dynmapIntegration = new DynmapIntegration(this);
-        if (dynmapIntegration.initialize()) {
-            mapIntegrations.add(dynmapIntegration);
-            manager.addListener(dynmapIntegration);
-            dynmapIntegration.onLoadersChanged(null);
-            getLogger().info("Intégration Dynmap activée.");
-        }
-
-        blueMapIntegration = null;
-        cancelBlueMapInitializationTask();
-        if (isBlueMapEnabled()) {
-            if (!tryInitializeBlueMapIntegration()) {
-                scheduleBlueMapInitialization();
-            }
-        } else {
-            getLogger().info("BlueMap n'est pas encore disponible, en attente de son initialisation.");
-            scheduleBlueMapInitialization();
-        }
-    }
-
-    private boolean isBlueMapEnabled() {
-        Plugin plugin = Bukkit.getPluginManager().getPlugin("BlueMap");
-        return plugin != null && plugin.isEnabled();
-    }
-
-    private boolean isBlueMapApiAvailable() {
-        try {
-            Class.forName("de.bluecolored.bluemap.api.BlueMapAPI");
-            return true;
-        } catch (ClassNotFoundException | LinkageError exception) {
-            return false;
-        }
-    }
-
-    private boolean tryInitializeBlueMapIntegration() {
-        if (blueMapIntegration != null || !isBlueMapEnabled() || !isBlueMapApiAvailable()) {
-            return blueMapIntegration != null;
-        }
-
-        BlueMapIntegration integration = new BlueMapIntegration(this);
-        if (integration.initialize()) {
-            blueMapIntegration = integration;
-            mapIntegrations.add(integration);
-            manager.addListener(integration);
-            integration.onLoadersChanged(null);
-            getLogger().info("Intégration BlueMap activée.");
-            return true;
-        }
-
-        return false;
-    }
-
-    private void scheduleBlueMapInitialization() {
-        if (blueMapInitializationTask != null) {
-            return;
-        }
-
-        blueMapInitializationTask = Bukkit.getScheduler().runTaskTimer(this, () -> {
-            if (tryInitializeBlueMapIntegration()) {
-                cancelBlueMapInitializationTask();
-            }
-        }, 1L, 20L);
-    }
-
-    private void cancelBlueMapInitializationTask() {
-        if (blueMapInitializationTask != null) {
-            blueMapInitializationTask.cancel();
-            blueMapInitializationTask = null;
-        }
     }
 
     public ItemStack createChunkLoaderItem() {
@@ -227,18 +180,6 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
             return false;
         }
         return meta.getPersistentDataContainer().has(itemKey, PersistentDataType.BYTE);
-    }
-
-    @EventHandler
-    public void onPluginEnable(PluginEnableEvent event) {
-        if (blueMapIntegration == null && "BlueMap".equalsIgnoreCase(event.getPlugin().getName())) {
-            cancelBlueMapInitializationTask();
-            Bukkit.getScheduler().runTask(this, () -> {
-                if (!tryInitializeBlueMapIntegration()) {
-                    scheduleBlueMapInitialization();
-                }
-            });
-        }
     }
 
     @Override

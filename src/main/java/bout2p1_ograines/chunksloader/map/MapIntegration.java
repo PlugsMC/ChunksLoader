@@ -1,17 +1,10 @@
 package bout2p1_ograines.chunksloader.map;
 
-import bout2p1_ograines.chunksloader.ChunkLoaderListener;
+import java.util.Collection;
 
-public interface MapIntegration extends ChunkLoaderListener {
-    /**
-     * Attempt to initialise the integration.
-     *
-     * @return {@code true} if the integration is active
-     */
-    boolean initialize();
+public interface MapIntegration {
 
-    /**
-     * Shut down and clean all registered resources.
-     */
+    void update(Collection<LoaderData> loaders);
+
     void shutdown();
 }

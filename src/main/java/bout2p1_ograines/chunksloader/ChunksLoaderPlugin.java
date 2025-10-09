@@ -67,7 +67,7 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
 
         var pluginCommand = getCommand("chunksloader");
         if (pluginCommand == null) {
-            getLogger().severe("La commande /chunksloader est introuvable dans plugin.yml");
+            getLogger().severe("The /chunksloader command is missing from plugin.yml");
             return;
         }
 
@@ -160,8 +160,8 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         if (meta != null) {
             meta.setDisplayName(ChatColor.GOLD + "Chunk Loader");
             List<String> lore = new ArrayList<>();
-            lore.add(ChatColor.GRAY + "Charge les chunks voisins");
-            lore.add(ChatColor.GRAY + "Zone " + (loaderRadius * 2 + 1) + "x" + (loaderRadius * 2 + 1));
+            lore.add(ChatColor.GRAY + "Keeps nearby chunks loaded");
+            lore.add(ChatColor.GRAY + "Area " + (loaderRadius * 2 + 1) + "x" + (loaderRadius * 2 + 1));
             meta.setLore(lore);
             meta.addItemFlags(ItemFlag.HIDE_ENCHANTS, ItemFlag.HIDE_ATTRIBUTES);
             PersistentDataContainer container = meta.getPersistentDataContainer();
@@ -185,13 +185,13 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) {
-            sender.sendMessage(ChatColor.RED + "/" + label + " give [player]" + ChatColor.GRAY + " ou " + ChatColor.RED + "/" + label + " map");
+            sender.sendMessage(ChatColor.RED + "/" + label + " give [player]" + ChatColor.GRAY + " or " + ChatColor.RED + "/" + label + " map");
             return true;
         }
 
         if (args[0].equalsIgnoreCase("give")) {
             if (!sender.hasPermission("chunksloader.give")) {
-                sender.sendMessage(ChatColor.RED + "Vous n'avez pas la permission.");
+                sender.sendMessage(ChatColor.RED + "You do not have permission.");
                 return true;
             }
 
@@ -199,12 +199,12 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
             if (args.length >= 2) {
                 target = Bukkit.getPlayerExact(args[1]);
                 if (target == null) {
-                    sender.sendMessage(ChatColor.RED + "Joueur introuvable.");
+                    sender.sendMessage(ChatColor.RED + "Player not found.");
                     return true;
                 }
             } else {
                 if (!(sender instanceof Player player)) {
-                    sender.sendMessage(ChatColor.RED + "Vous devez préciser un joueur.");
+                    sender.sendMessage(ChatColor.RED + "You must specify a player.");
                     return true;
                 }
                 target = player;
@@ -212,20 +212,20 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
 
             ItemStack item = createChunkLoaderItem();
             target.getInventory().addItem(item);
-            sender.sendMessage(ChatColor.GREEN + "Chunk loader donné à " + target.getName() + ".");
+            sender.sendMessage(ChatColor.GREEN + "Gave a chunk loader to " + target.getName() + ".");
             return true;
         }
 
         if (args[0].equalsIgnoreCase("map")) {
             if (!(sender instanceof Player player)) {
-                sender.sendMessage(ChatColor.RED + "Cette commande est réservée aux joueurs.");
+                sender.sendMessage(ChatColor.RED + "This command is only available to players.");
                 return true;
             }
             showMap(player);
             return true;
         }
 
-        sender.sendMessage(ChatColor.RED + "Sous-commande inconnue.");
+        sender.sendMessage(ChatColor.RED + "Unknown sub-command.");
         return true;
     }
 
@@ -237,7 +237,7 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         int centerChunkX = player.getLocation().getChunk().getX();
         int centerChunkZ = player.getLocation().getChunk().getZ();
         StringBuilder builder = new StringBuilder();
-        builder.append(ChatColor.YELLOW).append("Carte des chunks chargés (" + (radius * 2 + 1) + "x" + (radius * 2 + 1) + "):");
+        builder.append(ChatColor.YELLOW).append("Loaded chunk map (" + (radius * 2 + 1) + "x" + (radius * 2 + 1) + "):");
         player.sendMessage(builder.toString());
 
         for (int dz = radius; dz >= -radius; dz--) {
@@ -264,7 +264,7 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
             player.sendMessage(row.toString());
         }
 
-        player.sendMessage(ChatColor.GREEN + "■" + ChatColor.GRAY + " = Chunk loader" + ChatColor.GOLD + "  ■" + ChatColor.GRAY + " = Chunk loader désactivé" + ChatColor.RED + "  ■" + ChatColor.GRAY + " = Spawn" + ChatColor.DARK_GRAY + "  ■" + ChatColor.GRAY + " = Inactif");
+        player.sendMessage(ChatColor.GREEN + "■" + ChatColor.GRAY + " = Chunk loader" + ChatColor.GOLD + "  ■" + ChatColor.GRAY + " = Disabled chunk loader" + ChatColor.RED + "  ■" + ChatColor.GRAY + " = Spawn" + ChatColor.DARK_GRAY + "  ■" + ChatColor.GRAY + " = Inactive");
     }
 
     @EventHandler
@@ -276,12 +276,12 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
 
         if (!manager.canPlaceLoader(event.getBlockPlaced().getLocation(), loaderRadius)) {
             event.setCancelled(true);
-            event.getPlayer().sendMessage(ChatColor.RED + "Impossible de placer un chunk loader dans une zone déjà chargée.");
+            event.getPlayer().sendMessage(ChatColor.RED + "You cannot place a chunk loader in an area that is already loaded.");
             return;
         }
 
         manager.addLoader(event.getBlockPlaced().getLocation());
-        event.getPlayer().sendMessage(ChatColor.GREEN + "Chunk loader activé.");
+        event.getPlayer().sendMessage(ChatColor.GREEN + "Chunk loader enabled.");
     }
 
     @EventHandler
@@ -294,7 +294,7 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         event.setDropItems(false);
         if (manager.removeLoader(block)) {
             block.getWorld().dropItemNaturally(block.getLocation(), createChunkLoaderItem());
-            event.getPlayer().sendMessage(ChatColor.YELLOW + "Chunk loader désactivé.");
+            event.getPlayer().sendMessage(ChatColor.YELLOW + "Chunk loader disabled.");
         }
     }
 
@@ -348,15 +348,15 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
 
     private void handleToggle(ChunkLoaderLocation location, Inventory inventory, Player player) {
         if (!manager.getLoaderStates(location.worldId()).containsKey(location)) {
-            player.sendMessage(ChatColor.RED + "Ce chunk loader n'existe plus.");
+            player.sendMessage(ChatColor.RED + "This chunk loader no longer exists.");
             player.closeInventory();
             return;
         }
         boolean active = manager.toggleLoader(location);
         if (active) {
-            player.sendMessage(ChatColor.GREEN + "Chunk loader activé.");
+            player.sendMessage(ChatColor.GREEN + "Chunk loader enabled.");
         } else {
-            player.sendMessage(ChatColor.YELLOW + "Chunk loader désactivé.");
+            player.sendMessage(ChatColor.YELLOW + "Chunk loader disabled.");
         }
         fillChunkLoaderMenu(inventory, location);
     }
@@ -389,11 +389,11 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
             if (active) {
-                meta.setDisplayName(ChatColor.GREEN + "Chunk loader actif");
-                meta.setLore(List.of(ChatColor.GRAY + "Clique pour désactiver le chunk loader."));
+                meta.setDisplayName(ChatColor.GREEN + "Chunk loader active");
+                meta.setLore(List.of(ChatColor.GRAY + "Click to disable the chunk loader."));
             } else {
-                meta.setDisplayName(ChatColor.GOLD + "Chunk loader désactivé");
-                meta.setLore(List.of(ChatColor.GRAY + "Clique pour réactiver le chunk loader."));
+                meta.setDisplayName(ChatColor.GOLD + "Chunk loader disabled");
+                meta.setLore(List.of(ChatColor.GRAY + "Click to reactivate the chunk loader."));
             }
             item.setItemMeta(meta);
         }
@@ -404,7 +404,7 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         ItemStack item = new ItemStack(Material.BARRIER);
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
-            meta.setDisplayName(ChatColor.RED + "Fermer");
+            meta.setDisplayName(ChatColor.RED + "Close");
             item.setItemMeta(meta);
         }
         return item;

@@ -85,7 +85,7 @@ public final class BlueMapIntegration implements MapIntegration {
                 }
             }
         } catch (Exception exception) {
-            plugin.getLogger().log(Level.WARNING, "Impossible de mettre à jour les marqueurs BlueMap", exception);
+            plugin.getLogger().log(Level.WARNING, "Unable to update BlueMap markers", exception);
         }
     }
 
@@ -110,13 +110,13 @@ public final class BlueMapIntegration implements MapIntegration {
     private String buildDetail(LoaderData loader) {
         return new StringBuilder()
             .append("<strong>").append(escape(loader.plainDisplayName())).append("</strong><br/>")
-            .append("Propriétaire : ").append(escape(loader.ownerLabel())).append("<br/>")
-            .append("Rayon : ").append(loader.radius()).append(" chunk(s)<br/>")
-            .append("Chunks : ").append(loader.chunkCount()).append("<br/>")
-            .append("État : ").append(loader.statusLabel()).append("<br/>")
-            .append("Position : ").append(loader.blockX()).append(", ")
+            .append("Owner: ").append(escape(loader.ownerLabel())).append("<br/>")
+            .append("Radius: ").append(loader.radius()).append(" chunk(s)<br/>")
+            .append("Chunks: ").append(loader.chunkCount()).append("<br/>")
+            .append("Status: ").append(loader.statusLabel()).append("<br/>")
+            .append("Position: ").append(loader.blockX()).append(", ")
             .append(loader.blockY()).append(", ").append(loader.blockZ()).append("<br/>")
-            .append("Activité : ").append(escape(loader.formatDuration(Locale.FRANCE)))
+            .append("Uptime: ").append(escape(loader.formatDuration(Locale.UK)))
             .toString();
     }
 
@@ -133,7 +133,7 @@ public final class BlueMapIntegration implements MapIntegration {
         try {
             api.getMaps().forEach(map -> map.getMarkerSets().remove(MARKER_SET_ID));
         } catch (Exception exception) {
-            plugin.getLogger().log(Level.WARNING, "Impossible de nettoyer les marqueurs BlueMap", exception);
+            plugin.getLogger().log(Level.WARNING, "Unable to clear BlueMap markers", exception);
         }
         worldCache.clear();
     }

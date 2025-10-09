@@ -98,7 +98,7 @@ public final class DynmapIntegration implements MapIntegration {
                 }
             }
         } catch (Exception exception) {
-            plugin.getLogger().log(Level.WARNING, "Impossible de mettre à jour les marqueurs Dynmap", exception);
+            plugin.getLogger().log(Level.WARNING, "Unable to update Dynmap markers", exception);
         }
     }
 
@@ -111,18 +111,18 @@ public final class DynmapIntegration implements MapIntegration {
                 deleteMarker.invoke(marker);
             }
         } catch (Exception exception) {
-            plugin.getLogger().log(Level.WARNING, "Impossible de nettoyer les marqueurs Dynmap", exception);
+            plugin.getLogger().log(Level.WARNING, "Unable to clear Dynmap markers", exception);
         }
     }
 
     private String buildDescription(LoaderData loader) {
         return new StringBuilder()
             .append("<strong>").append(html(loader.plainDisplayName())).append("</strong><br/>")
-            .append("Propriétaire : ").append(html(loader.ownerLabel())).append("<br/>")
-            .append("Rayon : ").append(loader.radius()).append(" chunk(s)<br/>")
-            .append("Chunks : ").append(loader.chunkCount()).append("<br/>")
-            .append("État : ").append(loader.statusLabel()).append("<br/>")
-            .append("Position : ").append(loader.blockX()).append(", ")
+            .append("Owner: ").append(html(loader.ownerLabel())).append("<br/>")
+            .append("Radius: ").append(loader.radius()).append(" chunk(s)<br/>")
+            .append("Chunks: ").append(loader.chunkCount()).append("<br/>")
+            .append("Status: ").append(loader.statusLabel()).append("<br/>")
+            .append("Position: ").append(loader.blockX()).append(", ")
             .append(loader.blockY()).append(", ").append(loader.blockZ())
             .toString();
     }
@@ -204,7 +204,7 @@ public final class DynmapIntegration implements MapIntegration {
         } catch (ClassNotFoundException ignored) {
             return Optional.empty();
         } catch (Exception exception) {
-            plugin.getLogger().log(Level.WARNING, "Impossible d'initialiser l'intégration Dynmap", exception);
+            plugin.getLogger().log(Level.WARNING, "Unable to initialise Dynmap integration", exception);
             return Optional.empty();
         }
     }

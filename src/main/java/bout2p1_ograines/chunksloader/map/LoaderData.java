@@ -38,11 +38,11 @@ public record LoaderData(
     }
 
     public String statusLabel() {
-        return active ? "Actif" : "Inactif";
+        return active ? "Active" : "Inactive";
     }
 
     public String ownerLabel() {
-        return ownerName == null || ownerName.isBlank() ? "Inconnu" : ownerName;
+        return ownerName == null || ownerName.isBlank() ? "Unknown" : ownerName;
     }
 
     public String formatDuration(Locale locale) {
@@ -55,7 +55,7 @@ public record LoaderData(
         hours %= 24L;
         StringBuilder builder = new StringBuilder();
         if (days > 0) {
-            builder.append(days).append('j').append(' ');
+            builder.append(days).append('d').append(' ');
         }
         if (hours > 0 || builder.length() > 0) {
             builder.append(hours).append('h').append(' ');

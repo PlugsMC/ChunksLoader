@@ -1,2 +1,4 @@
-target/
+.gradle/
+build/
 assets/*.jar
+gradle/wrapper/gradle-wrapper.jar

@@ -290,8 +290,8 @@ public class PlayerEmulationController {
                 }
 
                 Method getBukkitEntity = serverPlayerClass.getMethod("getBukkitEntity");
-                Method moveToMethod = findMethod(serverPlayerClass, "moveTo", double.class, double.class, double.class);
-                Method teleportMethod = findMethod(serverPlayerClass, "teleportTo", double.class, double.class, double.class);
+                Method moveToMethod = findPositionMethod(serverPlayerClass, "moveTo");
+                Method teleportMethod = findPositionMethod(serverPlayerClass, "teleportTo");
                 Method setYawMethod = findMethod(serverPlayerClass, "setYRot", float.class);
                 Method setPitchMethod = findMethod(serverPlayerClass, "setXRot", float.class);
 
@@ -554,6 +554,31 @@ public class PlayerEmulationController {
             }
         }
 
+        private static Method findPositionMethod(Class<?> type, String name) {
+            Method bestMatch = null;
+            for (Method method : type.getMethods()) {
+                if (!method.getName().equals(name)) {
+                    continue;
+                }
+                Class<?>[] params = method.getParameterTypes();
+                if (params.length < 3) {
+                    continue;
+                }
+                if (!(isCoordinateType(params[0]) && isCoordinateType(params[1]) && isCoordinateType(params[2]))) {
+                    continue;
+                }
+                method.setAccessible(true);
+                if (bestMatch == null || params.length > bestMatch.getParameterCount()) {
+                    bestMatch = method;
+                }
+            }
+            return bestMatch;
+        }
+
+        private static boolean isCoordinateType(Class<?> type) {
+            return type == double.class || type == Double.class;
+        }
+
         private static Method findZeroArgMethod(Class<?> type, String... candidates) {
             for (String candidate : candidates) {
                 try {
@@ -714,17 +739,55 @@ public class PlayerEmulationController {
         }
 
         private void positionPlayer(Object serverPlayer, Location location) throws InvocationTargetException, IllegalAccessException {
+            boolean handledOrientation = false;
             if (moveToMethod != null) {
-                moveToMethod.invoke(serverPlayer, location.getX(), location.getY(), location.getZ());
+                handledOrientation = invokePositioningMethod(serverPlayer, moveToMethod, location);
             } else if (teleportMethod != null) {
-                teleportMethod.invoke(serverPlayer, location.getX(), location.getY(), location.getZ());
+                handledOrientation = invokePositioningMethod(serverPlayer, teleportMethod, location);
             }
-            if (setYawMethod != null) {
+            if (!handledOrientation && setYawMethod != null) {
                 setYawMethod.invoke(serverPlayer, location.getYaw());
             }
-            if (setPitchMethod != null) {
+            if (!handledOrientation && setPitchMethod != null) {
                 setPitchMethod.invoke(serverPlayer, location.getPitch());
             }
+        }
+
+        private boolean invokePositioningMethod(Object serverPlayer, Method method, Location location) throws InvocationTargetException, IllegalAccessException {
+            Class<?>[] parameterTypes = method.getParameterTypes();
+            Object[] arguments = new Object[parameterTypes.length];
+            arguments[0] = location.getX();
+            arguments[1] = location.getY();
+            arguments[2] = location.getZ();
+            int orientationIndex = 0;
+            for (int i = 3; i < parameterTypes.length; i++) {
+                Class<?> type = parameterTypes[i];
+                if (type == float.class || type == Float.class) {
+                    float value = orientationIndex == 0 ? location.getYaw() : orientationIndex == 1 ? location.getPitch() : 0.0f;
+                    arguments[i] = value;
+                    orientationIndex++;
+                } else if (type == double.class || type == Double.class) {
+                    double value = orientationIndex == 0 ? location.getYaw() : orientationIndex == 1 ? location.getPitch() : 0.0d;
+                    arguments[i] = value;
+                    orientationIndex++;
+                } else if (type == boolean.class || type == Boolean.class) {
+                    arguments[i] = Boolean.FALSE;
+                } else if (type == int.class || type == Integer.class) {
+                    arguments[i] = 0;
+                } else if (type == long.class || type == Long.class) {
+                    arguments[i] = 0L;
+                } else if (type == short.class || type == Short.class) {
+                    arguments[i] = (short) 0;
+                } else if (type == byte.class || type == Byte.class) {
+                    arguments[i] = (byte) 0;
+                } else if (type == char.class || type == Character.class) {
+                    arguments[i] = (char) 0;
+                } else {
+                    arguments[i] = null;
+                }
+            }
+            method.invoke(serverPlayer, arguments);
+            return orientationIndex >= 2;
         }
 
         private void configureBukkitPlayer(Player player) {

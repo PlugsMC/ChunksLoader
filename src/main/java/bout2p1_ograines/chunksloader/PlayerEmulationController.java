@@ -10,13 +10,21 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.RecordComponent;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Collection;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalDouble;
+import java.util.OptionalInt;
+import java.util.OptionalLong;
 import java.util.Set;
+import java.util.Collections;
 import java.util.UUID;
 import java.util.logging.Level;
 
@@ -363,7 +371,10 @@ public class PlayerEmulationController {
                 Method createDefault = clientInformationClass.getDeclaredMethod("createDefault");
                 if (Modifier.isStatic(createDefault.getModifiers()) && createDefault.getParameterCount() == 0) {
                     createDefault.setAccessible(true);
-                    return createDefault.invoke(null);
+                    Object result = createDefault.invoke(null);
+                    if (result != null) {
+                        return result;
+                    }
                 }
             } catch (ReflectiveOperationException ignored) {
             }
@@ -372,6 +383,88 @@ public class PlayerEmulationController {
                 ctor.setAccessible(true);
                 return ctor.newInstance();
             } catch (ReflectiveOperationException ignored) {
+            }
+            if (clientInformationClass.isRecord()) {
+                try {
+                    return instantiateRecord(clientInformationClass);
+                } catch (ReflectiveOperationException ignored) {
+                }
+            }
+            return null;
+        }
+
+        private static Object instantiateRecord(Class<?> recordClass) throws ReflectiveOperationException {
+            RecordComponent[] components = recordClass.getRecordComponents();
+            Class<?>[] parameterTypes = new Class<?>[components.length];
+            Object[] values = new Object[components.length];
+            for (int i = 0; i < components.length; i++) {
+                RecordComponent component = components[i];
+                parameterTypes[i] = component.getType();
+                values[i] = defaultValueForType(component.getType(), component.getName());
+            }
+            Constructor<?> canonical = recordClass.getDeclaredConstructor(parameterTypes);
+            canonical.setAccessible(true);
+            return canonical.newInstance(values);
+        }
+
+        private static Object defaultValueForType(Class<?> type, String name) throws ReflectiveOperationException {
+            if (type.isPrimitive()) {
+                if (type == boolean.class) {
+                    return false;
+                } else if (type == byte.class) {
+                    return (byte) 0;
+                } else if (type == short.class) {
+                    return (short) 0;
+                } else if (type == int.class) {
+                    if (name.toLowerCase(Locale.ROOT).contains("distance")) {
+                        return 10;
+                    }
+                    return 0;
+                } else if (type == long.class) {
+                    return 0L;
+                } else if (type == float.class) {
+                    return 0.0f;
+                } else if (type == double.class) {
+                    return 0.0d;
+                } else if (type == char.class) {
+                    return (char) 0;
+                }
+            } else if (String.class.isAssignableFrom(type)) {
+                return "en_us";
+            } else if (Enum.class.isAssignableFrom(type)) {
+                Object[] constants = type.getEnumConstants();
+                if (constants != null && constants.length > 0) {
+                    return constants[0];
+                }
+                return null;
+            } else if (Optional.class.isAssignableFrom(type)) {
+                return Optional.empty();
+            } else if (type == OptionalInt.class) {
+                return OptionalInt.empty();
+            } else if (type == OptionalLong.class) {
+                return OptionalLong.empty();
+            } else if (type == OptionalDouble.class) {
+                return OptionalDouble.empty();
+            } else if (Collection.class.isAssignableFrom(type)) {
+                if (Set.class.isAssignableFrom(type)) {
+                    return Collections.emptySet();
+                } else if (List.class.isAssignableFrom(type)) {
+                    return Collections.emptyList();
+                }
+                return Collections.emptyList();
+            } else if (Map.class.isAssignableFrom(type)) {
+                return Collections.emptyMap();
+            } else if (UUID.class.isAssignableFrom(type)) {
+                return new UUID(0L, 0L);
+            } else if (Locale.class.isAssignableFrom(type)) {
+                return Locale.US;
+            }
+            try {
+                Constructor<?> ctor = type.getDeclaredConstructor();
+                ctor.setAccessible(true);
+                return ctor.newInstance();
+            } catch (ReflectiveOperationException ignored) {
+                // Fall through
             }
             return null;
         }

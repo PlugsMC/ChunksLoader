@@ -218,6 +218,11 @@ public class PlayerEmulationController {
         private final Class<?> serverLevelClass;
         private final Method getClientInformationMethod;
         private final Field clientInformationField;
+        private final Constructor<?> serverGamePacketListenerConstructor;
+        private final Field connectionField;
+        private final Class<?> connectionClass;
+        private final Class<?> packetListenerClass;
+        private final Method connectionSetListenerMethod;
 
         private ReflectionBridge(ChunksLoaderPlugin plugin,
                                  Object minecraftServer,
@@ -240,7 +245,12 @@ public class PlayerEmulationController {
                                  Class<?> serverPlayerClass,
                                  Class<?> serverLevelClass,
                                  Method getClientInformationMethod,
-                                 Field clientInformationField) {
+                                 Field clientInformationField,
+                                 Constructor<?> serverGamePacketListenerConstructor,
+                                 Field connectionField,
+                                 Class<?> connectionClass,
+                                 Class<?> packetListenerClass,
+                                 Method connectionSetListenerMethod) {
             this.plugin = plugin;
             this.minecraftServer = minecraftServer;
             this.serverPlayerConstructor = serverPlayerConstructor;
@@ -263,6 +273,11 @@ public class PlayerEmulationController {
             this.serverLevelClass = serverLevelClass;
             this.getClientInformationMethod = getClientInformationMethod;
             this.clientInformationField = clientInformationField;
+            this.serverGamePacketListenerConstructor = serverGamePacketListenerConstructor;
+            this.connectionField = connectionField;
+            this.connectionClass = connectionClass;
+            this.packetListenerClass = packetListenerClass;
+            this.connectionSetListenerMethod = connectionSetListenerMethod;
         }
 
         static ReflectionBridge create(ChunksLoaderPlugin plugin) {
@@ -332,6 +347,29 @@ public class PlayerEmulationController {
                     return null;
                 }
 
+                Class<?> serverGamePacketListenerClass = tryClass("net.minecraft.server.network.ServerGamePacketListenerImpl");
+                Class<?> connectionClass = tryClass("net.minecraft.network.Connection");
+                Class<?> packetListenerClass = tryClass("net.minecraft.network.PacketListener");
+                Constructor<?> serverGamePacketListenerConstructor = null;
+                Field connectionField = null;
+                Method connectionSetListenerMethod = null;
+                if (connectionClass != null && packetListenerClass != null) {
+                    connectionSetListenerMethod = findMethod(connectionClass, "setListener", packetListenerClass);
+                }
+                if (serverGamePacketListenerClass != null && connectionClass != null) {
+                    serverGamePacketListenerConstructor = selectServerGamePacketListenerConstructor(
+                        serverGamePacketListenerClass,
+                        minecraftServer.getClass(),
+                        connectionClass,
+                        serverPlayerClass
+                    );
+                    connectionField = findField(serverPlayerClass, serverGamePacketListenerClass, "connection");
+                }
+                if (serverGamePacketListenerConstructor == null || connectionField == null || connectionClass == null) {
+                    plugin.getLogger().warning("Unable to initialise simulated network connection; player emulation disabled.");
+                    return null;
+                }
+
                 return new ReflectionBridge(
                     plugin,
                     minecraftServer,
@@ -354,7 +392,12 @@ public class PlayerEmulationController {
                     serverPlayerClass,
                     serverLevelClass,
                     getClientInformationMethod,
-                    clientInformationField
+                    clientInformationField,
+                    serverGamePacketListenerConstructor,
+                    connectionField,
+                    connectionClass,
+                    packetListenerClass,
+                    connectionSetListenerMethod
                 );
             } catch (ReflectiveOperationException exception) {
                 plugin.getLogger().log(Level.WARNING, "Failed to initialise player emulation bridge", exception);
@@ -388,6 +431,67 @@ public class PlayerEmulationController {
                 }
             }
             return chosen;
+        }
+
+        private static Constructor<?> selectServerGamePacketListenerConstructor(Class<?> listenerClass,
+                                                                                Class<?> minecraftServerClass,
+                                                                                Class<?> connectionClass,
+                                                                                Class<?> serverPlayerClass) {
+            Constructor<?> chosen = null;
+            int score = -1;
+            for (Constructor<?> constructor : listenerClass.getConstructors()) {
+                Class<?>[] params = constructor.getParameterTypes();
+                boolean hasServer = false;
+                boolean hasConnection = false;
+                boolean hasPlayer = false;
+                for (Class<?> param : params) {
+                    if (!hasServer && minecraftServerClass.isAssignableFrom(param)) {
+                        hasServer = true;
+                    }
+                    if (!hasConnection && param.isAssignableFrom(connectionClass)) {
+                        hasConnection = true;
+                    }
+                    if (!hasPlayer && param.isAssignableFrom(serverPlayerClass)) {
+                        hasPlayer = true;
+                    }
+                }
+                if (!(hasServer && hasConnection && hasPlayer)) {
+                    continue;
+                }
+                int constructorScore = params.length;
+                if (constructorScore > score) {
+                    constructor.setAccessible(true);
+                    chosen = constructor;
+                    score = constructorScore;
+                }
+            }
+            if (chosen != null) {
+                return chosen;
+            }
+            Constructor<?>[] constructors = listenerClass.getConstructors();
+            Arrays.sort(constructors, Comparator.comparingInt((Constructor<?> ctor) -> ctor.getParameterCount()).reversed());
+            for (Constructor<?> constructor : constructors) {
+                Class<?>[] params = constructor.getParameterTypes();
+                boolean hasServer = false;
+                boolean hasConnection = false;
+                boolean hasPlayer = false;
+                for (Class<?> param : params) {
+                    if (!hasServer && minecraftServerClass.isAssignableFrom(param)) {
+                        hasServer = true;
+                    }
+                    if (!hasConnection && param.isAssignableFrom(connectionClass)) {
+                        hasConnection = true;
+                    }
+                    if (!hasPlayer && param.isAssignableFrom(serverPlayerClass)) {
+                        hasPlayer = true;
+                    }
+                }
+                if (hasServer && hasPlayer) {
+                    constructor.setAccessible(true);
+                    return constructor;
+                }
+            }
+            return null;
         }
 
         private static Class<?> tryClass(String name) {
@@ -671,6 +775,10 @@ public class PlayerEmulationController {
                 Object profile = gameProfileConstructor.newInstance(uuid, name);
                 Object[] args = buildConstructorArguments(serverLevel, profile);
                 Object serverPlayer = serverPlayerConstructor.newInstance(args);
+                if (!attachSimulatedConnection(serverPlayer)) {
+                    plugin.getLogger().warning("Unable to attach simulated connection for player '" + name + "'");
+                    return null;
+                }
                 positionPlayer(serverPlayer, location);
                 serverLevelAddPlayer.invoke(serverLevel, serverPlayer);
 
@@ -686,6 +794,63 @@ public class PlayerEmulationController {
                 plugin.getLogger().log(Level.WARNING, "Failed to spawn simulated player '" + name + "'", exception);
                 return null;
             }
+        }
+
+        private boolean attachSimulatedConnection(Object serverPlayer) throws ReflectiveOperationException {
+            Object connection = createConnection();
+            if (connection == null) {
+                return false;
+            }
+            Object listener = createPacketListener(serverPlayer, connection);
+            if (listener == null) {
+                return false;
+            }
+            if (connectionSetListenerMethod != null && packetListenerClass != null && packetListenerClass.isInstance(listener)) {
+                connectionSetListenerMethod.invoke(connection, listener);
+            }
+            connectionField.set(serverPlayer, listener);
+            return true;
+        }
+
+        private Object createConnection() throws ReflectiveOperationException {
+            Constructor<?>[] constructors = connectionClass.getDeclaredConstructors();
+            Arrays.sort(constructors, Comparator.comparingInt((Constructor<?> ctor) -> ctor.getParameterCount()));
+            for (Constructor<?> constructor : constructors) {
+                Object instance = invokeWithDefaultArguments(null, constructor);
+                if (instance != null) {
+                    return instance;
+                }
+            }
+            return instantiateWithConstructors(connectionClass);
+        }
+
+        private Object createPacketListener(Object serverPlayer, Object connection) throws ReflectiveOperationException {
+            Constructor<?> constructor = serverGamePacketListenerConstructor;
+            Class<?>[] parameterTypes = constructor.getParameterTypes();
+            java.lang.reflect.Type[] genericTypes = constructor.getGenericParameterTypes();
+            Parameter[] parameters = constructor.getParameters();
+            Object[] values = new Object[parameterTypes.length];
+            for (int i = 0; i < parameterTypes.length; i++) {
+                Class<?> parameterType = parameterTypes[i];
+                if (parameterType.isInstance(minecraftServer)) {
+                    values[i] = minecraftServer;
+                } else if (parameterType.isAssignableFrom(connectionClass)) {
+                    values[i] = connection;
+                } else if (parameterType.isAssignableFrom(serverPlayerClass)) {
+                    values[i] = serverPlayer;
+                } else {
+                    String name = parameters.length > i ? parameters[i].getName() : "";
+                    values[i] = defaultValueForType(parameterType, genericTypes[i], name);
+                    if (values[i] == null) {
+                        values[i] = instantiateWithConstructors(parameterType);
+                    }
+                    if (values[i] == null && parameterType.isPrimitive()) {
+                        return null;
+                    }
+                }
+            }
+            constructor.setAccessible(true);
+            return constructor.newInstance(values);
         }
 
         void remove(SimulatedPlayer player) throws InvocationTargetException, IllegalAccessException {
@@ -923,7 +1088,7 @@ public class PlayerEmulationController {
 
         private static Object instantiateWithConstructors(Class<?> type) throws ReflectiveOperationException {
             Constructor<?>[] constructors = type.getDeclaredConstructors();
-            Arrays.sort(constructors, Comparator.comparingInt(Constructor::getParameterCount));
+            Arrays.sort(constructors, Comparator.comparingInt((Constructor<?> ctor) -> ctor.getParameterCount()));
             for (Constructor<?> constructor : constructors) {
                 Object value = invokeWithDefaultArguments(null, constructor);
                 if (value != null) {

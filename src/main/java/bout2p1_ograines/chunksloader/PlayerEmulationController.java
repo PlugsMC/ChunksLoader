@@ -7,14 +7,23 @@ import org.bukkit.World;
 import org.bukkit.entity.Player;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Executable;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Parameter;
+import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.RecordComponent;
+import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -24,7 +33,6 @@ import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.Set;
-import java.util.Collections;
 import java.util.UUID;
 import java.util.logging.Level;
 
@@ -207,6 +215,8 @@ public class PlayerEmulationController {
         private final Class<?> clientInformationClass;
         private final Class<?> serverPlayerClass;
         private final Class<?> serverLevelClass;
+        private final Method getClientInformationMethod;
+        private final Field clientInformationField;
 
         private ReflectionBridge(ChunksLoaderPlugin plugin,
                                  Object minecraftServer,
@@ -226,7 +236,9 @@ public class PlayerEmulationController {
                                  Object defaultClientInformation,
                                  Class<?> clientInformationClass,
                                  Class<?> serverPlayerClass,
-                                 Class<?> serverLevelClass) {
+                                 Class<?> serverLevelClass,
+                                 Method getClientInformationMethod,
+                                 Field clientInformationField) {
             this.plugin = plugin;
             this.minecraftServer = minecraftServer;
             this.serverPlayerConstructor = serverPlayerConstructor;
@@ -246,6 +258,8 @@ public class PlayerEmulationController {
             this.clientInformationClass = clientInformationClass;
             this.serverPlayerClass = serverPlayerClass;
             this.serverLevelClass = serverLevelClass;
+            this.getClientInformationMethod = getClientInformationMethod;
+            this.clientInformationField = clientInformationField;
         }
 
         static ReflectionBridge create(ChunksLoaderPlugin plugin) {
@@ -269,6 +283,11 @@ public class PlayerEmulationController {
                     clientInformationClass = tryClass("net.minecraft.network.protocol.login.ClientInformation");
                 }
                 Object defaultClientInformation = createDefaultClientInformation(clientInformationClass);
+                Method getClientInformationMethod = findZeroArgMethod(serverPlayerClass, "clientInformation", "getClientInformation");
+                Field clientInformationField = null;
+                if (getClientInformationMethod == null && clientInformationClass != null) {
+                    clientInformationField = findField(serverPlayerClass, clientInformationClass, "clientInformation");
+                }
 
                 Method getBukkitEntity = serverPlayerClass.getMethod("getBukkitEntity");
                 Method moveToMethod = findMethod(serverPlayerClass, "moveTo", double.class, double.class, double.class);
@@ -322,7 +341,9 @@ public class PlayerEmulationController {
                     defaultClientInformation,
                     clientInformationClass,
                     serverPlayerClass,
-                    serverLevelClass
+                    serverLevelClass,
+                    getClientInformationMethod,
+                    clientInformationField
                 );
             } catch (ReflectiveOperationException exception) {
                 plugin.getLogger().log(Level.WARNING, "Failed to initialise player emulation bridge", exception);
@@ -371,13 +392,9 @@ public class PlayerEmulationController {
                 return null;
             }
             try {
-                Method createDefault = clientInformationClass.getDeclaredMethod("createDefault");
-                if (Modifier.isStatic(createDefault.getModifiers()) && createDefault.getParameterCount() == 0) {
-                    createDefault.setAccessible(true);
-                    Object result = createDefault.invoke(null);
-                    if (result != null) {
-                        return result;
-                    }
+                Object viaFactory = invokeStaticFactory(clientInformationClass, "createDefault", "defaultOptions", "defaultConfig", "defaultSettings", "defaultInstance");
+                if (viaFactory != null) {
+                    return viaFactory;
                 }
             } catch (ReflectiveOperationException ignored) {
             }
@@ -399,9 +416,19 @@ public class PlayerEmulationController {
             }
             if (clientInformationClass.isRecord()) {
                 try {
-                    return instantiateRecord(clientInformationClass);
+                    Object record = instantiateRecord(clientInformationClass);
+                    if (record != null) {
+                        return record;
+                    }
                 } catch (ReflectiveOperationException ignored) {
                 }
+            }
+            try {
+                Object constructed = instantiateWithConstructors(clientInformationClass);
+                if (constructed != null) {
+                    return constructed;
+                }
+            } catch (ReflectiveOperationException ignored) {
             }
             return null;
         }
@@ -434,14 +461,14 @@ public class PlayerEmulationController {
             for (int i = 0; i < components.length; i++) {
                 RecordComponent component = components[i];
                 parameterTypes[i] = component.getType();
-                values[i] = defaultValueForType(component.getType(), component.getName());
+                values[i] = defaultValueForType(component.getType(), component.getGenericType(), component.getName());
             }
             Constructor<?> canonical = recordClass.getDeclaredConstructor(parameterTypes);
             canonical.setAccessible(true);
             return canonical.newInstance(values);
         }
 
-        private static Object defaultValueForType(Class<?> type, String name) throws ReflectiveOperationException {
+        private static Object defaultValueForType(Class<?> type, java.lang.reflect.Type genericType, String name) throws ReflectiveOperationException {
             if (type.isPrimitive()) {
                 if (type == boolean.class) {
                     return false;
@@ -471,6 +498,12 @@ public class PlayerEmulationController {
                     return constants[0];
                 }
                 return null;
+            } else if (EnumSet.class.isAssignableFrom(type)) {
+                Class<?> elementType = extractEnumType(genericType);
+                if (elementType != null && Enum.class.isAssignableFrom(elementType)) {
+                    return EnumSet.noneOf((Class<? extends Enum>) elementType);
+                }
+                return EnumSet.noneOf(DummyEnum.class);
             } else if (Optional.class.isAssignableFrom(type)) {
                 return Optional.empty();
             } else if (type == OptionalInt.class) {
@@ -493,6 +526,14 @@ public class PlayerEmulationController {
             } else if (Locale.class.isAssignableFrom(type)) {
                 return Locale.US;
             }
+            Object constant = extractStaticConstant(type, "DEFAULT", "EMPTY", "INSTANCE", "ZERO", "NONE");
+            if (constant != null) {
+                return constant;
+            }
+            Object viaFactory = invokeStaticFactory(type, "createDefault", "createEmpty", "empty", "of");
+            if (viaFactory != null) {
+                return viaFactory;
+            }
             try {
                 Constructor<?> ctor = type.getDeclaredConstructor();
                 ctor.setAccessible(true);
@@ -511,6 +552,47 @@ public class PlayerEmulationController {
             } catch (NoSuchMethodException ignored) {
                 return null;
             }
+        }
+
+        private static Method findZeroArgMethod(Class<?> type, String... candidates) {
+            for (String candidate : candidates) {
+                try {
+                    Method method = type.getMethod(candidate);
+                    method.setAccessible(true);
+                    return method;
+                } catch (NoSuchMethodException ignored) {
+                }
+                try {
+                    Method method = type.getDeclaredMethod(candidate);
+                    method.setAccessible(true);
+                    return method;
+                } catch (NoSuchMethodException ignored) {
+                }
+            }
+            return null;
+        }
+
+        private static Field findField(Class<?> type, Class<?> expectedType, String... candidates) {
+            for (String candidate : candidates) {
+                try {
+                    Field field = type.getDeclaredField(candidate);
+                    if (expectedType == null || expectedType.isAssignableFrom(field.getType())) {
+                        field.setAccessible(true);
+                        return field;
+                    }
+                } catch (NoSuchFieldException ignored) {
+                }
+            }
+            for (Field field : type.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers())) {
+                    continue;
+                }
+                if (expectedType == null || expectedType.isAssignableFrom(field.getType())) {
+                    field.setAccessible(true);
+                    return field;
+                }
+            }
+            return null;
         }
 
         private static Method findSingleParamMethod(Class<?> type, Class<?> argument, String... preferredNames) {
@@ -600,7 +682,7 @@ public class PlayerEmulationController {
                 } else if (param.getName().equals("com.mojang.authlib.GameProfile")) {
                     args[i] = profile;
                 } else if (clientInformationClass != null && param.isAssignableFrom(clientInformationClass)) {
-                    args[i] = defaultClientInformation;
+                    args[i] = resolveClientInformation();
                 } else if (param.isPrimitive()) {
                     args[i] = primitiveDefault(param);
                 } else {
@@ -652,6 +734,143 @@ public class PlayerEmulationController {
             player.setCollidable(false);
             player.setSleepingIgnored(true);
             player.setGravity(false);
+        }
+
+        private Object resolveClientInformation() {
+            if (clientInformationClass == null) {
+                return null;
+            }
+            if (defaultClientInformation != null) {
+                return defaultClientInformation;
+            }
+            for (Player online : Bukkit.getOnlinePlayers()) {
+                try {
+                    Object info = extractClientInformation(online);
+                    if (info != null) {
+                        return info;
+                    }
+                } catch (ReflectiveOperationException ignored) {
+                }
+            }
+            return null;
+        }
+
+        private Object extractClientInformation(Player player) throws ReflectiveOperationException {
+            if (clientInformationClass == null) {
+                return null;
+            }
+            Object craftPlayer = player;
+            Method getHandle = craftPlayer.getClass().getMethod("getHandle");
+            Object handle = getHandle.invoke(craftPlayer);
+            if (getClientInformationMethod != null) {
+                Object value = getClientInformationMethod.invoke(handle);
+                if (value != null) {
+                    return value;
+                }
+            }
+            if (clientInformationField != null) {
+                Object value = clientInformationField.get(handle);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        private static Object invokeStaticFactory(Class<?> type, String... names) throws ReflectiveOperationException {
+            for (String name : names) {
+                try {
+                    for (Method method : type.getDeclaredMethods()) {
+                        if (!method.getName().equals(name)) {
+                            continue;
+                        }
+                        if (!Modifier.isStatic(method.getModifiers())) {
+                            continue;
+                        }
+                        if (!type.isAssignableFrom(method.getReturnType())) {
+                            continue;
+                        }
+                        Object value = invokeWithDefaultArguments(null, method);
+                        if (value != null) {
+                            return value;
+                        }
+                    }
+                } catch (SecurityException ignored) {
+                }
+            }
+            return null;
+        }
+
+        private static Object instantiateWithConstructors(Class<?> type) throws ReflectiveOperationException {
+            Constructor<?>[] constructors = type.getDeclaredConstructors();
+            Arrays.sort(constructors, Comparator.comparingInt(Constructor::getParameterCount));
+            for (Constructor<?> constructor : constructors) {
+                Object value = invokeWithDefaultArguments(null, constructor);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        private static Object invokeWithDefaultArguments(Object target, Executable executable) throws ReflectiveOperationException {
+            Class<?>[] parameterTypes = executable.getParameterTypes();
+            if (parameterTypes.length == 0) {
+                if (executable instanceof Method method) {
+                    method.setAccessible(true);
+                    return method.invoke(target);
+                } else if (executable instanceof Constructor<?> constructor) {
+                    constructor.setAccessible(true);
+                    return constructor.newInstance();
+                }
+            }
+            Object[] values = new Object[parameterTypes.length];
+            Parameter[] parameters = executable.getParameters();
+            for (int i = 0; i < parameterTypes.length; i++) {
+                Class<?> parameterType = parameterTypes[i];
+                String parameterName = parameters.length > i ? parameters[i].getName() : "";
+                Object value = defaultValueForType(parameterType, parameters.length > i ? parameters[i].getParameterizedType() : parameterType, parameterName);
+                if (value == null && parameterType.isPrimitive()) {
+                    return null;
+                }
+                values[i] = value;
+            }
+            executable.setAccessible(true);
+            if (executable instanceof Method method) {
+                return method.invoke(target, values);
+            }
+            Constructor<?> constructor = (Constructor<?>) executable;
+            return constructor.newInstance(values);
+        }
+
+        private static Object extractStaticConstant(Class<?> type, String... names) {
+            for (String name : names) {
+                try {
+                    Field field = type.getDeclaredField(name);
+                    if (Modifier.isStatic(field.getModifiers())) {
+                        field.setAccessible(true);
+                        Object value = field.get(null);
+                        if (value != null) {
+                            return value;
+                        }
+                    }
+                } catch (ReflectiveOperationException ignored) {
+                }
+            }
+            return null;
+        }
+
+        private static Class<?> extractEnumType(Type genericType) {
+            if (genericType instanceof ParameterizedType parameterizedType) {
+                Type[] arguments = parameterizedType.getActualTypeArguments();
+                if (arguments.length == 1 && arguments[0] instanceof Class<?> cls) {
+                    return cls;
+                }
+            }
+            return null;
+        }
+
+        private enum DummyEnum {
         }
     }
 }

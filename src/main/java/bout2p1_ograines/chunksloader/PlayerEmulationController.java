@@ -220,6 +220,7 @@ public class PlayerEmulationController {
         private final Field clientInformationField;
         private final Constructor<?> serverGamePacketListenerConstructor;
         private final Field connectionField;
+        private final Method connectionSetterMethod;
         private final Class<?> connectionClass;
         private final Class<?> packetListenerClass;
         private final Method connectionSetListenerMethod;
@@ -248,6 +249,7 @@ public class PlayerEmulationController {
                                  Field clientInformationField,
                                  Constructor<?> serverGamePacketListenerConstructor,
                                  Field connectionField,
+                                 Method connectionSetterMethod,
                                  Class<?> connectionClass,
                                  Class<?> packetListenerClass,
                                  Method connectionSetListenerMethod) {
@@ -275,6 +277,7 @@ public class PlayerEmulationController {
             this.clientInformationField = clientInformationField;
             this.serverGamePacketListenerConstructor = serverGamePacketListenerConstructor;
             this.connectionField = connectionField;
+            this.connectionSetterMethod = connectionSetterMethod;
             this.connectionClass = connectionClass;
             this.packetListenerClass = packetListenerClass;
             this.connectionSetListenerMethod = connectionSetListenerMethod;
@@ -352,6 +355,7 @@ public class PlayerEmulationController {
                 Class<?> packetListenerClass = tryClass("net.minecraft.network.PacketListener");
                 Constructor<?> serverGamePacketListenerConstructor = null;
                 Field connectionField = null;
+                Method connectionSetterMethod = null;
                 Method connectionSetListenerMethod = null;
                 if (connectionClass != null && packetListenerClass != null) {
                     connectionSetListenerMethod = findMethod(connectionClass, "setListener", packetListenerClass);
@@ -365,7 +369,30 @@ public class PlayerEmulationController {
                     );
                     connectionField = findField(serverPlayerClass, serverGamePacketListenerClass, "connection");
                 }
-                if (serverGamePacketListenerConstructor == null || connectionField == null || connectionClass == null) {
+                if (connectionField == null && serverGamePacketListenerClass != null) {
+                    connectionSetterMethod = findSingleParamMethod(
+                        serverPlayerClass,
+                        serverGamePacketListenerClass,
+                        "setConnection",
+                        "connection",
+                        "setListener",
+                        "setupConnection"
+                    );
+                }
+                if (connectionField == null && connectionSetterMethod == null && packetListenerClass != null) {
+                    connectionSetterMethod = findSingleParamMethod(
+                        serverPlayerClass,
+                        packetListenerClass,
+                        "setConnection",
+                        "connection",
+                        "setListener",
+                        "setupConnection"
+                    );
+                }
+                if (connectionField == null && connectionSetterMethod == null) {
+                    connectionField = findField(serverPlayerClass, null, "connection");
+                }
+                if (serverGamePacketListenerConstructor == null || (connectionField == null && connectionSetterMethod == null) || connectionClass == null) {
                     plugin.getLogger().warning("Unable to initialise simulated network connection; player emulation disabled.");
                     return null;
                 }
@@ -395,6 +422,7 @@ public class PlayerEmulationController {
                     clientInformationField,
                     serverGamePacketListenerConstructor,
                     connectionField,
+                    connectionSetterMethod,
                     connectionClass,
                     packetListenerClass,
                     connectionSetListenerMethod
@@ -808,7 +836,11 @@ public class PlayerEmulationController {
             if (connectionSetListenerMethod != null && packetListenerClass != null && packetListenerClass.isInstance(listener)) {
                 connectionSetListenerMethod.invoke(connection, listener);
             }
-            connectionField.set(serverPlayer, listener);
+            if (connectionField != null) {
+                connectionField.set(serverPlayer, listener);
+            } else if (connectionSetterMethod != null) {
+                connectionSetterMethod.invoke(serverPlayer, listener);
+            }
             return true;
         }
 

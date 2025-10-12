@@ -51,6 +51,21 @@ map-radius: 5      # Radius, in chunks, of the `/chunksloader map` preview.
 Reload the server or restart it after changing the configuration so the new
 values take effect.
 
+## Player simulation (Minecraft 1.21+)
+
+Simulated players let a loader keep farms and other mechanics active by acting
+as if someone is standing on the loader block. The feature is available on
+servers running Minecraft **1.21** or newer and is controlled from the chunk
+loader menu:
+
+1. Place a loader and right-click it to open the GUI.
+2. Activate the loader with the dye item if it is currently disabled.
+3. Click the player-head slot to toggle player emulation on or off.
+
+When emulation is enabled the loader spawns an invisible spectator-mode player
+at its location while it is active. Older server versions show the toggle as a
+greyed-out dye and keep the feature disabled automatically.【F:src/main/java/bout2p1_ograines/chunksloader/ChunksLoaderPlugin.java†L370-L468】
+
 ## Map integrations
 
 * **Dynmap** – When Dynmap is installed, the plugin creates a dedicated marker

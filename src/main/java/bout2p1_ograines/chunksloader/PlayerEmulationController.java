@@ -393,23 +393,7 @@ public class PlayerEmulationController {
                     connectionField = findField(serverPlayerClass, null, "connection");
                 }
                 if (serverGamePacketListenerConstructor == null || (connectionField == null && connectionSetterMethod == null) || connectionClass == null) {
-                    List<String> reasons = new ArrayList<>();
-                    if (serverGamePacketListenerClass == null) {
-                        reasons.add("missing net.minecraft.server.network.ServerGamePacketListenerImpl");
-                    } else if (serverGamePacketListenerConstructor == null) {
-                        reasons.add("unable to locate a usable ServerGamePacketListenerImpl constructor");
-                    }
-                    if (connectionClass == null) {
-                        reasons.add("missing net.minecraft.network.Connection class");
-                    }
-                    if (packetListenerClass == null) {
-                        reasons.add("missing net.minecraft.network.PacketListener class");
-                    }
-                    if (connectionField == null && connectionSetterMethod == null) {
-                        reasons.add("no connection field or setter on ServerPlayer");
-                    }
-                    String suffix = reasons.isEmpty() ? "" : " Details: " + String.join("; ", reasons);
-                    plugin.getLogger().warning("Unable to initialise simulated network connection; player emulation disabled." + suffix);
+                    plugin.getLogger().warning("Unable to initialise simulated network connection; player emulation disabled.");
                     return null;
                 }
 

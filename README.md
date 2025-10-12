@@ -66,31 +66,6 @@ When emulation is enabled the loader spawns an invisible spectator-mode player
 at its location while it is active. Older server versions show the toggle as a
 greyed-out dye and keep the feature disabled automatically.【F:src/main/java/bout2p1_ograines/chunksloader/ChunksLoaderPlugin.java†L370-L468】
 
-> **Troubleshooting:** The plugin prints `Unable to initialise simulated
-> network connection; player emulation disabled.` when it cannot find the
-> required Minecraft server classes via reflection. This happens on server
-> builds older than 1.21 or when the plugin jar does not match the running
-> Minecraft version. To enable the feature, run the plugin on a supported
-> Spigot/Paper 1.21+ server (or build the plugin against your target version)
-> and restart so the simulated connection can be created successfully.
-> Purpur and other Paper-derived forks are supported as long as the jar matches
-> the exact Minecraft version you are running—for example, use
-> `ChunksLoader-1.21.9-*.jar` on Purpur **1.21.9** (or rebuild with
-> `./gradlew -PmcVersion=1.21.9 build` before restarting the server). When the
-> warning still appears, check the server console for the extended message that
-> now lists the exact missing class, constructor, or field (for example `no
-> connection field or setter on ServerPlayer`). That detail normally means a
-> mismatched jar was loaded; if the versions do match, share the full warning
-> line when asking for help so we can identify which Purpur build changed the
-> internals.
-
-> **Can another plugin provide the simulated players?** No. ChunksLoader spawns
-> its emulated players by reflectively calling the internal server classes that
-> exist in Mojang's 1.21+ server jars. Because there is no public Bukkit, Spigot
-> or Paper API for this behaviour, the feature cannot be proxied through or
-> enabled by installing a separate plugin—the server itself must expose the
-> required classes.
-
 ## Map integrations
 
 * **Dynmap** – When Dynmap is installed, the plugin creates a dedicated marker

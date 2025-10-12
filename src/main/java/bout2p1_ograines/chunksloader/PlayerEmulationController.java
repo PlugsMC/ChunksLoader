@@ -185,6 +185,7 @@ public class PlayerEmulationController {
         private final Constructor<?> serverPlayerConstructor;
         private final Object playerList;
         private final Method playerListRemove;
+        private final Method playerListAdd;
         private final Method serverLevelAddPlayer;
         private final Method getBukkitEntity;
         private final Method moveToMethod;
@@ -205,6 +206,7 @@ public class PlayerEmulationController {
                                  Constructor<?> serverPlayerConstructor,
                                  Object playerList,
                                  Method playerListRemove,
+                                 Method playerListAdd,
                                  Method serverLevelAddPlayer,
                                  Method getBukkitEntity,
                                  Method moveToMethod,
@@ -224,6 +226,7 @@ public class PlayerEmulationController {
             this.serverPlayerConstructor = serverPlayerConstructor;
             this.playerList = playerList;
             this.playerListRemove = playerListRemove;
+            this.playerListAdd = playerListAdd;
             this.serverLevelAddPlayer = serverLevelAddPlayer;
             this.getBukkitEntity = getBukkitEntity;
             this.moveToMethod = moveToMethod;
@@ -285,6 +288,10 @@ public class PlayerEmulationController {
 
                 Object playerList = minecraftServer.getClass().getMethod("getPlayerList").invoke(minecraftServer);
                 Method playerListRemove = findSingleParamMethod(playerList.getClass(), serverPlayerClass, "remove", "removePlayer");
+                Method playerListAdd = findSingleParamMethod(playerList.getClass(), serverPlayerClass, "addPlayerToWorld", "addPlayer", "addNewPlayer");
+                if (playerListAdd == null) {
+                    plugin.getLogger().warning("Unable to locate a PlayerList method to register simulated players; they may not appear in the tab list.");
+                }
 
                 Method serverLevelAddPlayer = findSingleParamMethod(serverLevelClass, serverPlayerClass, "addNewPlayer", "addPlayer", "addFreshEntity");
                 if (serverLevelAddPlayer == null) {
@@ -298,6 +305,7 @@ public class PlayerEmulationController {
                     serverPlayerConstructor,
                     playerList,
                     playerListRemove,
+                    playerListAdd,
                     serverLevelAddPlayer,
                     getBukkitEntity,
                     moveToMethod,
@@ -428,6 +436,9 @@ public class PlayerEmulationController {
                 Object serverPlayer = serverPlayerConstructor.newInstance(args);
                 positionPlayer(serverPlayer, location);
                 serverLevelAddPlayer.invoke(serverLevel, serverPlayer);
+                if (playerListAdd != null) {
+                    playerListAdd.invoke(playerList, serverPlayer);
+                }
 
                 Player bukkitPlayer = null;
                 Object bukkitEntity = getBukkitEntity.invoke(serverPlayer);

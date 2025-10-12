@@ -80,7 +80,7 @@ public class ChunkLoaderManager {
                         ChunkLoaderLocation location = new ChunkLoaderLocation(uuid, x, y, z);
                         boolean isActive = active == null || active;
                         boolean emulate = emulatePlayer != null && emulatePlayer;
-                        if (emulate && !playerEmulationController.isPlayerCommandAvailable()) {
+                        if (emulate && !playerEmulationController.isSupported()) {
                             plugin.getLogger().warning("Simulated players are not supported on this server. Disabling player emulation for loader at " + x + ", " + y + ", " + z + ".");
                             emulate = false;
                         }
@@ -459,7 +459,7 @@ public class ChunkLoaderManager {
         if (state.isPlayerEmulationEnabled() == emulate) {
             return true;
         }
-        if (emulate && !playerEmulationController.isPlayerCommandAvailable()) {
+        if (emulate && !playerEmulationController.isSupported()) {
             return false;
         }
         if (emulate && (state.getSimulatedPlayerName() == null || state.getSimulatedPlayerName().isBlank())) {
@@ -492,7 +492,7 @@ public class ChunkLoaderManager {
     }
 
     public boolean canEmulatePlayers() {
-        return playerEmulationController.isPlayerCommandAvailable();
+        return playerEmulationController.isSupported();
     }
 
     public void clearAllPlayerEmulators() {

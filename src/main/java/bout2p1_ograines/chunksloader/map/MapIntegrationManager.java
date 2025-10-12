@@ -2,27 +2,22 @@ package bout2p1_ograines.chunksloader.map;
 
 import bout2p1_ograines.chunksloader.ChunkLoaderListener;
 import bout2p1_ograines.chunksloader.ChunksLoaderPlugin;
-import de.bluecolored.bluemap.api.BlueMapAPI;
-import org.bukkit.Bukkit;
 import org.bukkit.World;
 
+import java.lang.reflect.Constructor;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Consumer;
+import java.util.logging.Level;
 
 public final class MapIntegrationManager implements ChunkLoaderListener {
 
     private final ChunksLoaderPlugin plugin;
-    private final Consumer<BlueMapAPI> enableListener;
-    private final Consumer<BlueMapAPI> disableListener;
 
     private DynmapIntegration dynmapIntegration;
-    private BlueMapIntegration blueMapIntegration;
+    private BlueMapBridge blueMapBridge;
 
     public MapIntegrationManager(ChunksLoaderPlugin plugin) {
         this.plugin = plugin;
-        this.enableListener = api -> Bukkit.getScheduler().runTask(plugin, () -> registerBlueMap(api));
-        this.disableListener = api -> Bukkit.getScheduler().runTask(plugin, () -> unregisterBlueMap(api));
     }
 
     public void initialize() {
@@ -33,9 +28,10 @@ public final class MapIntegrationManager implements ChunkLoaderListener {
             })
             .orElse(null);
 
-        BlueMapAPI.onEnable(enableListener);
-        BlueMapAPI.onDisable(disableListener);
-        BlueMapAPI.getInstance().ifPresent(api -> Bukkit.getScheduler().runTask(plugin, () -> registerBlueMap(api)));
+        blueMapBridge = createBlueMapBridge();
+        if (blueMapBridge != null) {
+            blueMapBridge.initialize();
+        }
     }
 
     public void updateAll() {
@@ -43,8 +39,8 @@ public final class MapIntegrationManager implements ChunkLoaderListener {
         if (dynmapIntegration != null) {
             dynmapIntegration.update(data);
         }
-        if (blueMapIntegration != null) {
-            blueMapIntegration.update(data);
+        if (blueMapBridge != null) {
+            blueMapBridge.update(data);
         }
     }
 
@@ -54,28 +50,33 @@ public final class MapIntegrationManager implements ChunkLoaderListener {
     }
 
     public void shutdown() {
-        BlueMapAPI.unregisterListener(enableListener);
-        BlueMapAPI.unregisterListener(disableListener);
         Optional.ofNullable(dynmapIntegration).ifPresent(MapIntegration::shutdown);
-        Optional.ofNullable(blueMapIntegration).ifPresent(MapIntegration::shutdown);
+        Optional.ofNullable(blueMapBridge).ifPresent(BlueMapBridge::shutdown);
         dynmapIntegration = null;
-        blueMapIntegration = null;
+        blueMapBridge = null;
     }
 
-    private void registerBlueMap(BlueMapAPI api) {
-        if (blueMapIntegration != null && blueMapIntegration.isFor(api)) {
-            return;
+    private BlueMapBridge createBlueMapBridge() {
+        ClassLoader classLoader = plugin.getClass().getClassLoader();
+        try {
+            Class.forName("de.bluecolored.bluemap.api.BlueMapAPI", false, classLoader);
+        } catch (ClassNotFoundException | NoClassDefFoundError ignored) {
+            plugin.getLogger().log(Level.FINE, "BlueMap not detected; skipping integration.");
+            return null;
         }
-        blueMapIntegration = new BlueMapIntegration(plugin, api);
-        plugin.getLogger().info("BlueMap integration enabled.");
-        updateAll();
-    }
 
-    private void unregisterBlueMap(BlueMapAPI api) {
-        if (blueMapIntegration != null && blueMapIntegration.isFor(api)) {
-            blueMapIntegration.shutdown();
-            blueMapIntegration = null;
-            plugin.getLogger().info("BlueMap integration disabled.");
+        try {
+            Class<?> bridgeClass = Class.forName(
+                "bout2p1_ograines.chunksloader.map.BlueMapIntegrationHandler",
+                false,
+                classLoader
+            );
+            Constructor<?> constructor = bridgeClass.getDeclaredConstructor(ChunksLoaderPlugin.class);
+            Object instance = constructor.newInstance(plugin);
+            return (BlueMapBridge) instance;
+        } catch (ReflectiveOperationException | ClassCastException | NoClassDefFoundError exception) {
+            plugin.getLogger().log(Level.WARNING, "Unable to initialize BlueMap integration", exception);
+            return null;
         }
     }
 }

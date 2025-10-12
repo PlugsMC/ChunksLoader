@@ -2,6 +2,7 @@ package bout2p1_ograines.chunksloader;
 
 import bout2p1_ograines.chunksloader.map.LoaderData;
 import bout2p1_ograines.chunksloader.map.MapIntegrationManager;
+import bout2p1_ograines.chunksloader.ChunkLoaderState;
 
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
@@ -42,6 +43,7 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
     private static final String MENU_TITLE = ChatColor.DARK_GREEN + "Chunk Loader";
     private static final int MENU_SIZE = 9;
     private static final int TOGGLE_SLOT = 4;
+    private static final int PLAYER_SLOT = 6;
     private static final int CLOSE_SLOT = 8;
 
     private NamespacedKey itemKey;
@@ -93,6 +95,7 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
             mapIntegrationManager.shutdown();
             mapIntegrationManager = null;
         }
+        manager.clearAllPlayerEmulators();
         manager.clearAllForcedChunks();
         manager.save();
     }
@@ -115,10 +118,10 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         int diameter = (radius * 2) + 1;
         int chunkCount = diameter * diameter;
         for (World world : Bukkit.getWorlds()) {
-            Map<ChunkLoaderLocation, Boolean> states = manager.getLoaderStates(world.getUID());
-            for (Map.Entry<ChunkLoaderLocation, Boolean> entry : states.entrySet()) {
+            Map<ChunkLoaderLocation, ChunkLoaderState> states = manager.getLoaderStates(world.getUID());
+            for (Map.Entry<ChunkLoaderLocation, ChunkLoaderState> entry : states.entrySet()) {
                 ChunkLoaderLocation location = entry.getKey();
-                boolean active = entry.getValue() != null && entry.getValue();
+                boolean active = entry.getValue() != null && entry.getValue().isActive();
                 int chunkX = Math.floorDiv(location.x(), 16);
                 int chunkZ = Math.floorDiv(location.z(), 16);
                 String id = world.getUID() + ":" + location.x() + ":" + location.y() + ":" + location.z();
@@ -330,6 +333,8 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         event.setCancelled(true);
         if (event.getRawSlot() == TOGGLE_SLOT) {
             handleToggle(menuHolder.getLocation(), inventory, player);
+        } else if (event.getRawSlot() == PLAYER_SLOT) {
+            handlePlayerEmulationToggle(menuHolder.getLocation(), inventory, player);
         } else if (event.getRawSlot() == CLOSE_SLOT) {
             player.closeInventory();
         }
@@ -347,7 +352,8 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
     }
 
     private void handleToggle(ChunkLoaderLocation location, Inventory inventory, Player player) {
-        if (!manager.getLoaderStates(location.worldId()).containsKey(location)) {
+        ChunkLoaderState state = manager.getLoaderState(location);
+        if (state == null) {
             player.sendMessage(ChatColor.RED + "This chunk loader no longer exists.");
             player.closeInventory();
             return;
@@ -357,6 +363,28 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
             player.sendMessage(ChatColor.GREEN + "Chunk loader enabled.");
         } else {
             player.sendMessage(ChatColor.YELLOW + "Chunk loader disabled.");
+        }
+        fillChunkLoaderMenu(inventory, location);
+    }
+
+    private void handlePlayerEmulationToggle(ChunkLoaderLocation location, Inventory inventory, Player player) {
+        if (!manager.hasLoader(location)) {
+            player.sendMessage(ChatColor.RED + "This chunk loader no longer exists.");
+            player.closeInventory();
+            return;
+        }
+        if (!manager.canEmulatePlayers()) {
+            player.sendMessage(ChatColor.RED + "This server version does not support simulated players.");
+            return;
+        }
+        boolean desired = manager.togglePlayerEmulation(location);
+        boolean current = manager.isPlayerEmulationEnabled(location);
+        if (desired != current) {
+            player.sendMessage(ChatColor.RED + "Unable to change player emulation for this chunk loader.");
+        } else if (current) {
+            player.sendMessage(ChatColor.GREEN + "Player emulation enabled.");
+        } else {
+            player.sendMessage(ChatColor.YELLOW + "Player emulation disabled.");
         }
         fillChunkLoaderMenu(inventory, location);
     }
@@ -373,13 +401,16 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
     private void fillChunkLoaderMenu(Inventory inventory, ChunkLoaderLocation location) {
         ItemStack filler = createFillerItem();
         for (int slot = 0; slot < inventory.getSize(); slot++) {
-            if (slot == TOGGLE_SLOT || slot == CLOSE_SLOT) {
+            if (slot == TOGGLE_SLOT || slot == PLAYER_SLOT || slot == CLOSE_SLOT) {
                 continue;
             }
             inventory.setItem(slot, filler.clone());
         }
-        boolean active = manager.isLoaderActive(location);
+        ChunkLoaderState state = manager.getLoaderState(location);
+        boolean active = state != null && state.isActive();
+        boolean emulate = state != null && state.isPlayerEmulationEnabled();
         inventory.setItem(TOGGLE_SLOT, createToggleItem(active));
+        inventory.setItem(PLAYER_SLOT, createPlayerEmulationItem(emulate, manager.canEmulatePlayers(), active));
         inventory.setItem(CLOSE_SLOT, createCloseItem());
     }
 
@@ -395,6 +426,43 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
                 meta.setDisplayName(ChatColor.GOLD + "Chunk loader disabled");
                 meta.setLore(List.of(ChatColor.GRAY + "Click to reactivate the chunk loader."));
             }
+            item.setItemMeta(meta);
+        }
+        return item;
+    }
+
+    private ItemStack createPlayerEmulationItem(boolean enabled, boolean available, boolean loaderActive) {
+        Material material;
+        ChatColor color;
+        List<String> lore = new ArrayList<>();
+        if (!available) {
+            material = Material.GRAY_DYE;
+            color = ChatColor.DARK_GRAY;
+            lore.add(ChatColor.GRAY + "Simulated players require Minecraft 1.21 or newer.");
+        } else if (enabled) {
+            material = Material.PLAYER_HEAD;
+            color = ChatColor.GREEN;
+            lore.add(ChatColor.GRAY + "Chunks behave as if a player is standing here.");
+            if (!loaderActive) {
+                lore.add(ChatColor.DARK_GRAY + "Activate the loader to spawn the player emulator.");
+            }
+            lore.add(ChatColor.YELLOW + "Click to disable player emulation.");
+        } else {
+            material = Material.SKELETON_SKULL;
+            color = ChatColor.GOLD;
+            lore.add(ChatColor.GRAY + "Enable to spawn a simulated player at this loader.");
+        }
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            if (!available) {
+                meta.setDisplayName(color + "Player emulation unavailable");
+            } else if (enabled) {
+                meta.setDisplayName(color + "Player emulation active");
+            } else {
+                meta.setDisplayName(color + "Enable player emulation");
+            }
+            meta.setLore(lore);
             item.setItemMeta(meta);
         }
         return item;

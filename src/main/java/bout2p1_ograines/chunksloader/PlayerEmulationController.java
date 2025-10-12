@@ -207,6 +207,7 @@ public class PlayerEmulationController {
         private final Method teleportMethod;
         private final Method setYawMethod;
         private final Method setPitchMethod;
+        private final Method setPosRawMethod;
         private final Method discardMethod;
         private final Method removeMethod;
         private final Object removalReason;
@@ -229,6 +230,7 @@ public class PlayerEmulationController {
                                  Method teleportMethod,
                                  Method setYawMethod,
                                  Method setPitchMethod,
+                                 Method setPosRawMethod,
                                  Method discardMethod,
                                  Method removeMethod,
                                  Object removalReason,
@@ -250,6 +252,7 @@ public class PlayerEmulationController {
             this.teleportMethod = teleportMethod;
             this.setYawMethod = setYawMethod;
             this.setPitchMethod = setPitchMethod;
+            this.setPosRawMethod = setPosRawMethod;
             this.discardMethod = discardMethod;
             this.removeMethod = removeMethod;
             this.removalReason = removalReason;
@@ -294,6 +297,13 @@ public class PlayerEmulationController {
                 Method teleportMethod = findPositionMethod(serverPlayerClass, "teleportTo");
                 Method setYawMethod = findMethod(serverPlayerClass, "setYRot", float.class);
                 Method setPitchMethod = findMethod(serverPlayerClass, "setXRot", float.class);
+                Method setPosRawMethod = findPositionMethod(serverPlayerClass, "setPosRaw");
+                if (setPosRawMethod == null) {
+                    setPosRawMethod = findPositionMethod(serverPlayerClass, "setPos");
+                }
+                if (setPosRawMethod == null) {
+                    setPosRawMethod = findPositionMethod(serverPlayerClass, "absMoveTo");
+                }
 
                 Method discardMethod = null;
                 try {
@@ -334,6 +344,7 @@ public class PlayerEmulationController {
                     teleportMethod,
                     setYawMethod,
                     setPitchMethod,
+                    setPosRawMethod,
                     discardMethod,
                     removeMethod,
                     removalReason,
@@ -739,11 +750,26 @@ public class PlayerEmulationController {
         }
 
         private void positionPlayer(Object serverPlayer, Location location) throws InvocationTargetException, IllegalAccessException {
+            boolean positioned = false;
             boolean handledOrientation = false;
-            if (moveToMethod != null) {
-                handledOrientation = invokePositioningMethod(serverPlayer, moveToMethod, location);
-            } else if (teleportMethod != null) {
-                handledOrientation = invokePositioningMethod(serverPlayer, teleportMethod, location);
+            PositioningResult moveResult = invokePositioningMethod(serverPlayer, moveToMethod, location, false);
+            if (moveResult.positioned()) {
+                positioned = true;
+                handledOrientation = moveResult.handledOrientation();
+            }
+            if (!positioned) {
+                PositioningResult teleportResult = invokePositioningMethod(serverPlayer, teleportMethod, location, true);
+                if (teleportResult.positioned()) {
+                    positioned = true;
+                    handledOrientation = teleportResult.handledOrientation();
+                }
+            }
+            if (!positioned) {
+                PositioningResult rawResult = invokePositioningMethod(serverPlayer, setPosRawMethod, location, false);
+                if (rawResult.positioned()) {
+                    positioned = true;
+                    handledOrientation = handledOrientation || rawResult.handledOrientation();
+                }
             }
             if (!handledOrientation && setYawMethod != null) {
                 setYawMethod.invoke(serverPlayer, location.getYaw());
@@ -753,7 +779,10 @@ public class PlayerEmulationController {
             }
         }
 
-        private boolean invokePositioningMethod(Object serverPlayer, Method method, Location location) throws InvocationTargetException, IllegalAccessException {
+        private PositioningResult invokePositioningMethod(Object serverPlayer, Method method, Location location, boolean ignoreConnectionNullPointer) throws InvocationTargetException, IllegalAccessException {
+            if (method == null) {
+                return PositioningResult.NOT_POSITIONED;
+            }
             Class<?>[] parameterTypes = method.getParameterTypes();
             Object[] arguments = new Object[parameterTypes.length];
             arguments[0] = location.getX();
@@ -786,8 +815,36 @@ public class PlayerEmulationController {
                     arguments[i] = null;
                 }
             }
-            method.invoke(serverPlayer, arguments);
-            return orientationIndex >= 2;
+            try {
+                method.invoke(serverPlayer, arguments);
+                return new PositioningResult(true, orientationIndex >= 2);
+            } catch (InvocationTargetException exception) {
+                if (ignoreConnectionNullPointer && isConnectionNullPointer(exception.getCause())) {
+                    plugin.getLogger().log(Level.FINEST, "Ignored connection-less teleport failure for simulated player positioning", exception.getCause());
+                    return PositioningResult.NOT_POSITIONED;
+                }
+                throw exception;
+            }
+        }
+
+        private boolean isConnectionNullPointer(Throwable throwable) {
+            if (!(throwable instanceof NullPointerException)) {
+                return false;
+            }
+            String message = throwable.getMessage();
+            if (message != null && message.contains("this.connection")) {
+                return true;
+            }
+            for (StackTraceElement element : throwable.getStackTrace()) {
+                if ("net.minecraft.server.level.ServerPlayer".equals(element.getClassName()) && "teleportTo".equals(element.getMethodName())) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private record PositioningResult(boolean positioned, boolean handledOrientation) {
+            private static final PositioningResult NOT_POSITIONED = new PositioningResult(false, false);
         }
 
         private void configureBukkitPlayer(Player player) {

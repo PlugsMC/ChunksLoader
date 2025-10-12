@@ -14,7 +14,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -25,9 +24,8 @@ public class ChunkLoaderManager {
     private final ChunksLoaderPlugin plugin;
     private final File storageFile;
 
-    private final Map<UUID, Map<ChunkLoaderLocation, ChunkLoaderState>> loadersByWorld = new HashMap<>();
+    private final Map<UUID, Map<ChunkLoaderLocation, Boolean>> loadersByWorld = new HashMap<>();
     private final List<ChunkLoaderListener> listeners = new ArrayList<>();
-    private final PlayerEmulationController playerEmulationController;
 
     public ChunkLoaderManager(ChunksLoaderPlugin plugin) {
         this.plugin = plugin;
@@ -36,7 +34,6 @@ public class ChunkLoaderManager {
             //noinspection ResultOfMethodCallIgnored
             plugin.getDataFolder().mkdirs();
         }
-        this.playerEmulationController = new PlayerEmulationController(plugin);
     }
 
     public void addListener(ChunkLoaderListener listener) {
@@ -67,28 +64,16 @@ public class ChunkLoaderManager {
             if (list == null) {
                 continue;
             }
-            Map<ChunkLoaderLocation, ChunkLoaderState> set = new HashMap<>();
+            Map<ChunkLoaderLocation, Boolean> set = new HashMap<>();
             for (Object entry : list) {
                 if (entry instanceof Map<?, ?> map) {
                     Integer x = mapValue(map, "x");
                     Integer y = mapValue(map, "y");
                     Integer z = mapValue(map, "z");
                     Boolean active = mapBoolean(map, "active");
-                    Boolean emulatePlayer = mapBoolean(map, "player");
-                    String playerName = mapString(map, "playerName");
                     if (x != null && y != null && z != null) {
                         ChunkLoaderLocation location = new ChunkLoaderLocation(uuid, x, y, z);
-                        boolean isActive = active == null || active;
-                        boolean emulate = emulatePlayer != null && emulatePlayer;
-                        if (emulate && !playerEmulationController.isPlayerCommandAvailable()) {
-                            plugin.getLogger().warning("Simulated players are not supported on this server. Disabling player emulation for loader at " + x + ", " + y + ", " + z + ".");
-                            emulate = false;
-                        }
-                        if (emulate && (playerName == null || playerName.isBlank())) {
-                            playerName = generateSimulatedPlayerName(location);
-                        }
-                        ChunkLoaderState state = new ChunkLoaderState(isActive, emulate, playerName);
-                        set.put(location, state);
+                        set.put(location, active == null || active);
                     } else {
                         plugin.getLogger().warning("Ignoring invalid chunk loader entry for world '" + worldId + "' in " + STORAGE_FILE);
                     }
@@ -105,22 +90,15 @@ public class ChunkLoaderManager {
 
     public void save() {
         FileConfiguration configuration = new YamlConfiguration();
-        for (Map.Entry<UUID, Map<ChunkLoaderLocation, ChunkLoaderState>> entry : loadersByWorld.entrySet()) {
+        for (Map.Entry<UUID, Map<ChunkLoaderLocation, Boolean>> entry : loadersByWorld.entrySet()) {
             List<Map<String, Object>> list = new ArrayList<>();
-            for (Map.Entry<ChunkLoaderLocation, ChunkLoaderState> loaderEntry : entry.getValue().entrySet()) {
+            for (Map.Entry<ChunkLoaderLocation, Boolean> loaderEntry : entry.getValue().entrySet()) {
                 ChunkLoaderLocation location = loaderEntry.getKey();
-                ChunkLoaderState state = loaderEntry.getValue();
                 Map<String, Object> map = new HashMap<>();
                 map.put("x", location.x());
                 map.put("y", location.y());
                 map.put("z", location.z());
-                map.put("active", state != null && state.isActive());
-                if (state != null && state.isPlayerEmulationEnabled()) {
-                    map.put("player", true);
-                }
-                if (state != null && state.getSimulatedPlayerName() != null) {
-                    map.put("playerName", state.getSimulatedPlayerName());
-                }
+                map.put("active", loaderEntry.getValue() != null && loaderEntry.getValue());
                 list.add(map);
             }
             configuration.set(entry.getKey().toString(), list);
@@ -155,17 +133,9 @@ public class ChunkLoaderManager {
         return null;
     }
 
-    private String mapString(Map<?, ?> map, String key) {
-        Object value = map.get(key);
-        if (value == null) {
-            return null;
-        }
-        return String.valueOf(value);
-    }
-
     public boolean isChunkLoaderBlock(Block block) {
         UUID worldId = block.getWorld().getUID();
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(worldId);
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(worldId);
         if (loaders == null) {
             return false;
         }
@@ -182,11 +152,7 @@ public class ChunkLoaderManager {
             return false;
         }
 
-        Map<ChunkLoaderLocation, ChunkLoaderState> states = loadersByWorld.get(worldId);
-        if (states == null) {
-            return true;
-        }
-        for (ChunkLoaderLocation loader : states.keySet()) {
+        for (ChunkLoaderLocation loader : getLoaderStates(worldId).keySet()) {
             if (overlaps(chunkX, chunkZ, loader, radius)) {
                 return false;
             }
@@ -196,9 +162,9 @@ public class ChunkLoaderManager {
 
     public void addLoader(Location location) {
         UUID worldId = location.getWorld().getUID();
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.computeIfAbsent(worldId, k -> new HashMap<>());
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.computeIfAbsent(worldId, k -> new HashMap<>());
         ChunkLoaderLocation loaderLocation = new ChunkLoaderLocation(worldId, location.getBlockX(), location.getBlockY(), location.getBlockZ());
-        loaders.put(loaderLocation, new ChunkLoaderState(true, false, null));
+        loaders.put(loaderLocation, true);
         save();
         applyForcedChunks(location.getWorld());
         notifyListeners(location.getWorld());
@@ -207,14 +173,13 @@ public class ChunkLoaderManager {
     public boolean removeLoader(Block block) {
         World world = block.getWorld();
         UUID worldId = world.getUID();
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(worldId);
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(worldId);
         if (loaders == null) {
             return false;
         }
         ChunkLoaderLocation location = new ChunkLoaderLocation(worldId, block.getX(), block.getY(), block.getZ());
-        ChunkLoaderState removed = loaders.remove(location);
+        Boolean removed = loaders.remove(location);
         if (removed != null) {
-            playerEmulationController.disable(location, removed);
             if (loaders.isEmpty()) {
                 loadersByWorld.remove(worldId);
             }
@@ -227,13 +192,13 @@ public class ChunkLoaderManager {
     }
 
     public Set<ChunkLoaderLocation> getLoaders(UUID worldId) {
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(worldId);
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(worldId);
         if (loaders == null) {
             return Set.of();
         }
         Set<ChunkLoaderLocation> active = new HashSet<>();
-        for (Map.Entry<ChunkLoaderLocation, ChunkLoaderState> entry : loaders.entrySet()) {
-            if (entry.getValue() != null && entry.getValue().isActive()) {
+        for (Map.Entry<ChunkLoaderLocation, Boolean> entry : loaders.entrySet()) {
+            if (Boolean.TRUE.equals(entry.getValue())) {
                 active.add(entry.getKey());
             }
         }
@@ -242,7 +207,7 @@ public class ChunkLoaderManager {
 
     public Set<ChunkLoaderLocation> getAllLoaders() {
         Set<ChunkLoaderLocation> all = new HashSet<>();
-        for (Map<ChunkLoaderLocation, ChunkLoaderState> loaders : loadersByWorld.values()) {
+        for (Map<ChunkLoaderLocation, Boolean> loaders : loadersByWorld.values()) {
             all.addAll(loaders.keySet());
         }
         return all;
@@ -267,24 +232,21 @@ public class ChunkLoaderManager {
     public void applyForcedChunks(World world) {
         clearForcedChunks(world);
         int radius = plugin.getLoaderRadius();
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(world.getUID());
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(world.getUID());
         if (loaders == null) {
-            playerEmulationController.clearWorld(world.getUID());
             return;
         }
-        for (Map.Entry<ChunkLoaderLocation, ChunkLoaderState> entry : loaders.entrySet()) {
-            if (entry.getValue() != null && entry.getValue().isActive()) {
+        for (Map.Entry<ChunkLoaderLocation, Boolean> entry : loaders.entrySet()) {
+            if (Boolean.TRUE.equals(entry.getValue())) {
                 forceChunkArea(world, entry.getKey(), radius);
             }
         }
-        playerEmulationController.syncWorld(world, loaders);
     }
 
     public void clearAllForcedChunks() {
         for (World world : Bukkit.getWorlds()) {
             clearForcedChunks(world);
         }
-        playerEmulationController.clearAll();
     }
 
     private void forceChunkArea(World world, ChunkLoaderLocation loader, int radius) {
@@ -344,12 +306,12 @@ public class ChunkLoaderManager {
     public Set<ChunkCoordinate> getInactiveChunkArea(World world) {
         Set<ChunkCoordinate> inactive = new HashSet<>();
         int radius = plugin.getLoaderRadius();
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(world.getUID());
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(world.getUID());
         if (loaders == null) {
             return inactive;
         }
-        for (Map.Entry<ChunkLoaderLocation, ChunkLoaderState> entry : loaders.entrySet()) {
-            if (entry.getValue() != null && entry.getValue().isActive()) {
+        for (Map.Entry<ChunkLoaderLocation, Boolean> entry : loaders.entrySet()) {
+            if (Boolean.TRUE.equals(entry.getValue())) {
                 continue;
             }
             ChunkLoaderLocation loader = entry.getKey();
@@ -364,25 +326,20 @@ public class ChunkLoaderManager {
         return inactive;
     }
 
-    public Map<ChunkLoaderLocation, ChunkLoaderState> getLoaderStates(UUID worldId) {
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(worldId);
+    public Map<ChunkLoaderLocation, Boolean> getLoaderStates(UUID worldId) {
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(worldId);
         if (loaders == null) {
             return Map.of();
         }
-        Map<ChunkLoaderLocation, ChunkLoaderState> copy = new HashMap<>();
-        for (Map.Entry<ChunkLoaderLocation, ChunkLoaderState> entry : loaders.entrySet()) {
-            copy.put(entry.getKey(), entry.getValue() == null ? null : new ChunkLoaderState(entry.getValue()));
-        }
-        return Map.copyOf(copy);
+        return Map.copyOf(loaders);
     }
 
     public boolean isLoaderActive(ChunkLoaderLocation location) {
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(location.worldId());
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(location.worldId());
         if (loaders == null) {
             return false;
         }
-        ChunkLoaderState state = loaders.get(location);
-        return state != null && state.isActive();
+        return Boolean.TRUE.equals(loaders.get(location));
     }
 
     public boolean isLoaderActive(Block block) {
@@ -391,15 +348,14 @@ public class ChunkLoaderManager {
     }
 
     public void setLoaderActive(ChunkLoaderLocation location, boolean active) {
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(location.worldId());
-        if (loaders == null) {
+        Map<ChunkLoaderLocation, Boolean> loaders = loadersByWorld.get(location.worldId());
+        if (loaders == null || !loaders.containsKey(location)) {
             return;
         }
-        ChunkLoaderState state = loaders.get(location);
-        if (state == null || state.isActive() == active) {
+        if (Boolean.TRUE.equals(loaders.get(location)) == active) {
             return;
         }
-        state.setActive(active);
+        loaders.put(location, active);
         save();
         World world = Bukkit.getWorld(location.worldId());
         if (world != null) {
@@ -412,115 +368,12 @@ public class ChunkLoaderManager {
     }
 
     public boolean toggleLoader(ChunkLoaderLocation location) {
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(location.worldId());
-        if (loaders == null || !loaders.containsKey(location)) {
+        if (!getLoaderStates(location.worldId()).containsKey(location)) {
             return false;
         }
         boolean currentlyActive = isLoaderActive(location);
         setLoaderActive(location, !currentlyActive);
         return !currentlyActive;
-    }
-
-    public ChunkLoaderState getLoaderState(ChunkLoaderLocation location) {
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(location.worldId());
-        if (loaders == null) {
-            return null;
-        }
-        ChunkLoaderState state = loaders.get(location);
-        if (state == null) {
-            return null;
-        }
-        return new ChunkLoaderState(state);
-    }
-
-    public boolean hasLoader(ChunkLoaderLocation location) {
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(location.worldId());
-        return loaders != null && loaders.containsKey(location);
-    }
-
-    public boolean isPlayerEmulationEnabled(ChunkLoaderLocation location) {
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(location.worldId());
-        if (loaders == null) {
-            return false;
-        }
-        ChunkLoaderState state = loaders.get(location);
-        return state != null && state.isPlayerEmulationEnabled();
-    }
-
-    public boolean setPlayerEmulation(ChunkLoaderLocation location, boolean emulate) {
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(location.worldId());
-        if (loaders == null) {
-            return false;
-        }
-        ChunkLoaderState state = loaders.get(location);
-        if (state == null) {
-            return false;
-        }
-        if (state.isPlayerEmulationEnabled() == emulate) {
-            return true;
-        }
-        if (emulate && !playerEmulationController.isPlayerCommandAvailable()) {
-            return false;
-        }
-        if (emulate && (state.getSimulatedPlayerName() == null || state.getSimulatedPlayerName().isBlank())) {
-            state.setSimulatedPlayerName(generateSimulatedPlayerName(location));
-        }
-        state.setPlayerEmulationEnabled(emulate);
-        save();
-        World world = Bukkit.getWorld(location.worldId());
-        if (world != null) {
-            applyForcedChunks(world);
-            notifyListeners(world);
-        } else {
-            applyForcedChunks();
-            notifyListeners(null);
-        }
-        return true;
-    }
-
-    public boolean togglePlayerEmulation(ChunkLoaderLocation location) {
-        Map<ChunkLoaderLocation, ChunkLoaderState> loaders = loadersByWorld.get(location.worldId());
-        if (loaders == null || !loaders.containsKey(location)) {
-            return false;
-        }
-        ChunkLoaderState state = loaders.get(location);
-        boolean target = state == null || !state.isPlayerEmulationEnabled();
-        if (!setPlayerEmulation(location, target)) {
-            return false;
-        }
-        return target;
-    }
-
-    public boolean canEmulatePlayers() {
-        return playerEmulationController.isPlayerCommandAvailable();
-    }
-
-    public void clearAllPlayerEmulators() {
-        playerEmulationController.clearAll();
-    }
-
-    private String generateSimulatedPlayerName(ChunkLoaderLocation location) {
-        long hash = 1469598103934665603L;
-        hash = mixHash(hash, location.worldId().getMostSignificantBits());
-        hash = mixHash(hash, location.worldId().getLeastSignificantBits());
-        hash = mixHash(hash, location.x());
-        hash = mixHash(hash, location.y());
-        hash = mixHash(hash, location.z());
-        String base = Long.toUnsignedString(hash, 36).toUpperCase(Locale.ROOT);
-        String name = "CL" + base;
-        if (name.length() > 16) {
-            name = name.substring(0, 16);
-        }
-        while (name.length() < 3) {
-            name = name + "0";
-        }
-        return name;
-    }
-
-    private long mixHash(long current, long value) {
-        current ^= value;
-        current *= 1099511628211L;
-        return current;
     }
 
 }

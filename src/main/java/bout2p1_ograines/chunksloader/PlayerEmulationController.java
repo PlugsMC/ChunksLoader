@@ -264,7 +264,10 @@ public class PlayerEmulationController {
                 }
 
                 Class<?> serverLevelClass = Class.forName("net.minecraft.server.level.ServerLevel");
-                Class<?> clientInformationClass = tryClass("net.minecraft.network.protocol.login.ClientInformation");
+                Class<?> clientInformationClass = tryClass("net.minecraft.server.level.ClientInformation");
+                if (clientInformationClass == null) {
+                    clientInformationClass = tryClass("net.minecraft.network.protocol.login.ClientInformation");
+                }
                 Object defaultClientInformation = createDefaultClientInformation(clientInformationClass);
 
                 Method getBukkitEntity = serverPlayerClass.getMethod("getBukkitEntity");
@@ -379,6 +382,16 @@ public class PlayerEmulationController {
             } catch (ReflectiveOperationException ignored) {
             }
             try {
+                Method candidate = findZeroArgFactoryMethod(clientInformationClass);
+                if (candidate != null) {
+                    Object result = candidate.invoke(null);
+                    if (result != null) {
+                        return result;
+                    }
+                }
+            } catch (ReflectiveOperationException ignored) {
+            }
+            try {
                 Constructor<?> ctor = clientInformationClass.getDeclaredConstructor();
                 ctor.setAccessible(true);
                 return ctor.newInstance();
@@ -389,6 +402,27 @@ public class PlayerEmulationController {
                     return instantiateRecord(clientInformationClass);
                 } catch (ReflectiveOperationException ignored) {
                 }
+            }
+            return null;
+        }
+
+        private static Method findZeroArgFactoryMethod(Class<?> clientInformationClass) {
+            for (Method method : clientInformationClass.getDeclaredMethods()) {
+                if (!Modifier.isStatic(method.getModifiers())) {
+                    continue;
+                }
+                if (!clientInformationClass.isAssignableFrom(method.getReturnType())) {
+                    continue;
+                }
+                if (method.getParameterCount() != 0) {
+                    continue;
+                }
+                String name = method.getName().toLowerCase(Locale.ROOT);
+                if (!name.contains("default") && !name.contains("create") && !name.contains("factory")) {
+                    continue;
+                }
+                method.setAccessible(true);
+                return method;
             }
             return null;
         }

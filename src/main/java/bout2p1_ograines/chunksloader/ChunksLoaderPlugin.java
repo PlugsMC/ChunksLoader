@@ -220,6 +220,10 @@ public class ChunksLoaderPlugin extends JavaPlugin implements Listener {
         }
 
         if (args[0].equalsIgnoreCase("map")) {
+            if (!sender.hasPermission("chunksloader.use")) {
+                sender.sendMessage(ChatColor.RED + "You do not have permission.");
+                return true;
+            }
             if (!(sender instanceof Player player)) {
                 sender.sendMessage(ChatColor.RED + "This command is only available to players.");
                 return true;
